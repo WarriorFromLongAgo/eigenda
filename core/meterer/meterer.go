@@ -26,6 +26,10 @@ type Config struct {
 
 	// ChainReadTimeout is the timeout for reading payment state from chain
 	ChainReadTimeout time.Duration
+	// ChainID indicate the network in which meterer(payment) is handled
+	ChainID *big.Int
+	// VerifyingContract is the address of the PaymentVault contract that verifies signatures
+	VerifyingContract common.Address
 }
 
 // Meterer handles payment accounting across different accounts. Disperser API server receives requests from clients and each request contains a blob header
@@ -39,6 +43,7 @@ type Meterer struct {
 	// OffchainStore uses DynamoDB to track metering and used to validate requests
 	OffchainStore OffchainStore
 
+	signer auth.EIP712Signer
 	logger logging.Logger
 }
 
@@ -49,12 +54,14 @@ func NewMeterer(
 	logger logging.Logger,
 ) (*Meterer, error) {
 	// TODO: create a separate thread to pull from the chain and update chain state
+
 	return &Meterer{
 		Config: config,
 
 		ChainState:    paymentChainState,
 		OffchainStore: offchainStore,
 
+		signer: auth.NewEIP712Signer(config.ChainID, config.VerifyingContract),
 		logger: logger.With("component", "Meterer"),
 	}, nil
 }
@@ -69,6 +76,7 @@ func (m *Meterer) MeterRequest(ctx context.Context, header core.PaymentMetadata)
 
 	// Validate against the payment method
 	if header.CumulativePayment == 0 {
+		fmt.Println("reservation: ", header.AccountID)
 		reservation, err := m.ChainState.GetActiveReservationByAccount(ctx, header.AccountID)
 		if err != nil {
 			return fmt.Errorf("failed to get active reservation by account: %w", err)
@@ -93,11 +101,7 @@ func (m *Meterer) MeterRequest(ctx context.Context, header core.PaymentMetadata)
 // ValidateSignature checks if the signature is valid against all other fields in the header
 // Assuming the signature is an eip712 signature
 func (m *Meterer) ValidateSignature(ctx context.Context, header core.PaymentMetadata) error {
-	// Create the EIP712Signer
-	//TODO: update the chainID and verifyingContract
-	signer := auth.NewEIP712Signer(big.NewInt(17000), common.HexToAddress("0x1234000000000000000000000000000000000000"))
-
-	recoveredAddress, err := signer.RecoverSender(&header)
+	recoveredAddress, err := m.signer.RecoverSender(&header)
 	if err != nil {
 		return fmt.Errorf("failed to recover sender: %w", err)
 	}
@@ -251,9 +255,14 @@ func (m *Meterer) PaymentCharged(dataLength uint32) uint64 {
 	return uint64(m.SymbolsCharged(dataLength)) * uint64(m.PricePerSymbol)
 }
 
-// SymbolsCharged returns the chargeable data length for a given data length
+// SymbolsCharged returns the number of symbols charged for a given data length
+// being at least MinNumSymbols or the nearest rounded-up multiple of MinNumSymbols.
 func (m *Meterer) SymbolsCharged(dataLength uint32) uint32 {
-	return uint32(max(dataLength, m.MinNumSymbols))
+	if dataLength <= m.MinNumSymbols {
+		return m.MinNumSymbols
+	}
+	// Round up to the nearest multiple of MinNumSymbols
+	return uint32(core.RoundUpDivide(uint(dataLength), uint(m.MinNumSymbols))) * m.MinNumSymbols
 }
 
 // ValidateBinIndex checks if the provided bin index is valid
