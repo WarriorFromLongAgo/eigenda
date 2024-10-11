@@ -181,7 +181,7 @@ func (s *OffchainStore) RemoveOnDemandPayment(ctx context.Context, accountID str
 // The queries are done sequentially instead of one-go for efficient querying and would not cause race condition errors for honest requests
 func (s *OffchainStore) GetRelevantOnDemandRecords(ctx context.Context, accountID string, cumulativePayment uint64) (uint64, uint64, uint32, error) {
 	// Fetch the largest entry smaller than the given cumulativePayment
-	smallerResult, err := s.dynamoClient.QueryIndexOrderWithLimit(ctx, s.onDemandTableName, "AccountIDIndex",
+	smallerResult, err := s.dynamoClient.QueryWithOrderLimit(ctx, s.onDemandTableName,
 		"AccountID = :account AND CumulativePayments < :cumulativePayment",
 		commondynamodb.ExpressionValues{
 			":account":           &types.AttributeValueMemberS{Value: accountID},
@@ -203,7 +203,7 @@ func (s *OffchainStore) GetRelevantOnDemandRecords(ctx context.Context, accountI
 	}
 
 	// Fetch the smallest entry larger than the given cumulativePayment
-	largerResult, err := s.dynamoClient.QueryIndexOrderWithLimit(ctx, s.onDemandTableName, "AccountIDIndex",
+	largerResult, err := s.dynamoClient.QueryWithOrderLimit(ctx, s.onDemandTableName,
 		"AccountID = :account AND CumulativePayments > :cumulativePayment",
 		commondynamodb.ExpressionValues{
 			":account":           &types.AttributeValueMemberS{Value: accountID},
