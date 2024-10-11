@@ -168,7 +168,7 @@ func (x *AuthenticatedRequest) GetAuthenticationData() *AuthenticationData {
 	return nil
 }
 
-func (x *AuthenticatedRequest) GetPaidDisperseRequest() *PaidDisperseBlobRequest {
+func (x *AuthenticatedRequest) GetPaidDisperseRequest() *DispersePaidBlobRequest {
 	if x, ok := x.GetPayload().(*AuthenticatedRequest_PaidDisperseRequest); ok {
 		return x.PaidDisperseRequest
 	}
@@ -188,7 +188,7 @@ type AuthenticatedRequest_AuthenticationData struct {
 }
 
 type AuthenticatedRequest_PaidDisperseRequest struct {
-	PaidDisperseRequest *PaidDisperseBlobRequest `protobuf:"bytes,3,opt,name=paid_disperse_request,json=paidDisperseRequest,proto3,oneof"`
+	PaidDisperseRequest *DispersePaidBlobRequest `protobuf:"bytes,3,opt,name=paid_disperse_request,json=paidDisperseRequest,proto3,oneof"`
 }
 
 func (*AuthenticatedRequest_DisperseRequest) isAuthenticatedRequest_Payload() {}
@@ -457,7 +457,7 @@ func (x *DisperseBlobRequest) GetAccountId() string {
 	return ""
 }
 
-type PaidDisperseBlobRequest struct {
+type DispersePaidBlobRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -489,8 +489,8 @@ type PaidDisperseBlobRequest struct {
 	Signature []byte `protobuf:"bytes,8,opt,name=signature,proto3" json:"signature,omitempty"`
 }
 
-func (x *PaidDisperseBlobRequest) Reset() {
-	*x = PaidDisperseBlobRequest{}
+func (x *DispersePaidBlobRequest) Reset() {
+	*x = DispersePaidBlobRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_disperser_disperser_proto_msgTypes[5]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -498,13 +498,13 @@ func (x *PaidDisperseBlobRequest) Reset() {
 	}
 }
 
-func (x *PaidDisperseBlobRequest) String() string {
+func (x *DispersePaidBlobRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PaidDisperseBlobRequest) ProtoMessage() {}
+func (*DispersePaidBlobRequest) ProtoMessage() {}
 
-func (x *PaidDisperseBlobRequest) ProtoReflect() protoreflect.Message {
+func (x *DispersePaidBlobRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_disperser_disperser_proto_msgTypes[5]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -516,47 +516,47 @@ func (x *PaidDisperseBlobRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PaidDisperseBlobRequest.ProtoReflect.Descriptor instead.
-func (*PaidDisperseBlobRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use DispersePaidBlobRequest.ProtoReflect.Descriptor instead.
+func (*DispersePaidBlobRequest) Descriptor() ([]byte, []int) {
 	return file_disperser_disperser_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *PaidDisperseBlobRequest) GetData() []byte {
+func (x *DispersePaidBlobRequest) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-func (x *PaidDisperseBlobRequest) GetCustomQuorumNumbers() []uint32 {
+func (x *DispersePaidBlobRequest) GetCustomQuorumNumbers() []uint32 {
 	if x != nil {
 		return x.CustomQuorumNumbers
 	}
 	return nil
 }
 
-func (x *PaidDisperseBlobRequest) GetAccountId() string {
+func (x *DispersePaidBlobRequest) GetAccountId() string {
 	if x != nil {
 		return x.AccountId
 	}
 	return ""
 }
 
-func (x *PaidDisperseBlobRequest) GetBinIndex() uint32 {
+func (x *DispersePaidBlobRequest) GetBinIndex() uint32 {
 	if x != nil {
 		return x.BinIndex
 	}
 	return 0
 }
 
-func (x *PaidDisperseBlobRequest) GetCumulativePayment() uint64 {
+func (x *DispersePaidBlobRequest) GetCumulativePayment() uint64 {
 	if x != nil {
 		return x.CumulativePayment
 	}
 	return 0
 }
 
-func (x *PaidDisperseBlobRequest) GetSignature() []byte {
+func (x *DispersePaidBlobRequest) GetSignature() []byte {
 	if x != nil {
 		return x.Signature
 	}
@@ -1322,8 +1322,8 @@ var file_disperser_disperser_proto_rawDesc = []byte{
 	0x12, 0x61, 0x75, 0x74, 0x68, 0x65, 0x6e, 0x74, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x44,
 	0x61, 0x74, 0x61, 0x12, 0x58, 0x0a, 0x15, 0x70, 0x61, 0x69, 0x64, 0x5f, 0x64, 0x69, 0x73, 0x70,
 	0x65, 0x72, 0x73, 0x65, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x18, 0x03, 0x20, 0x01,
-	0x28, 0x0b, 0x32, 0x22, 0x2e, 0x64, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x72, 0x2e, 0x50,
-	0x61, 0x69, 0x64, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x42, 0x6c, 0x6f, 0x62, 0x52,
+	0x28, 0x0b, 0x32, 0x22, 0x2e, 0x64, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x72, 0x2e, 0x44,
+	0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x50, 0x61, 0x69, 0x64, 0x42, 0x6c, 0x6f, 0x62, 0x52,
 	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x48, 0x00, 0x52, 0x13, 0x70, 0x61, 0x69, 0x64, 0x44, 0x69,
 	0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x42, 0x09, 0x0a,
 	0x07, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x22, 0xad, 0x01, 0x0a, 0x12, 0x41, 0x75, 0x74,
@@ -1354,8 +1354,8 @@ var file_disperser_disperser_proto_rawDesc = []byte{
 	0x73, 0x74, 0x6f, 0x6d, 0x51, 0x75, 0x6f, 0x72, 0x75, 0x6d, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72,
 	0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x61, 0x63, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x5f, 0x69, 0x64, 0x18,
 	0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x61, 0x63, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x49, 0x64,
-	0x22, 0xea, 0x01, 0x0a, 0x17, 0x50, 0x61, 0x69, 0x64, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73,
-	0x65, 0x42, 0x6c, 0x6f, 0x62, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x12, 0x0a, 0x04,
+	0x22, 0xea, 0x01, 0x0a, 0x17, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x50, 0x61, 0x69,
+	0x64, 0x42, 0x6c, 0x6f, 0x62, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x12, 0x0a, 0x04,
 	0x64, 0x61, 0x74, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x04, 0x64, 0x61, 0x74, 0x61,
 	0x12, 0x32, 0x0a, 0x15, 0x63, 0x75, 0x73, 0x74, 0x6f, 0x6d, 0x5f, 0x71, 0x75, 0x6f, 0x72, 0x75,
 	0x6d, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0d, 0x52,
@@ -1486,9 +1486,9 @@ var file_disperser_disperser_proto_rawDesc = []byte{
 	0x70, 0x65, 0x72, 0x73, 0x65, 0x42, 0x6c, 0x6f, 0x62, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
 	0x1a, 0x1c, 0x2e, 0x64, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x72, 0x2e, 0x44, 0x69, 0x73,
 	0x70, 0x65, 0x72, 0x73, 0x65, 0x42, 0x6c, 0x6f, 0x62, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00,
-	0x12, 0x56, 0x0a, 0x10, 0x50, 0x61, 0x69, 0x64, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65,
+	0x12, 0x56, 0x0a, 0x10, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x50, 0x61, 0x69, 0x64,
 	0x42, 0x6c, 0x6f, 0x62, 0x12, 0x22, 0x2e, 0x64, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x72,
-	0x2e, 0x50, 0x61, 0x69, 0x64, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x42, 0x6c, 0x6f,
+	0x2e, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x50, 0x61, 0x69, 0x64, 0x42, 0x6c, 0x6f,
 	0x62, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1c, 0x2e, 0x64, 0x69, 0x73, 0x70, 0x65,
 	0x72, 0x73, 0x65, 0x72, 0x2e, 0x44, 0x69, 0x73, 0x70, 0x65, 0x72, 0x73, 0x65, 0x42, 0x6c, 0x6f,
 	0x62, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x22, 0x00, 0x12, 0x5f, 0x0a, 0x19, 0x44, 0x69, 0x73, 0x70,
@@ -1535,7 +1535,7 @@ var file_disperser_disperser_proto_goTypes = []interface{}{
 	(*BlobAuthHeader)(nil),          // 3: disperser.BlobAuthHeader
 	(*AuthenticationData)(nil),      // 4: disperser.AuthenticationData
 	(*DisperseBlobRequest)(nil),     // 5: disperser.DisperseBlobRequest
-	(*PaidDisperseBlobRequest)(nil), // 6: disperser.PaidDisperseBlobRequest
+	(*DispersePaidBlobRequest)(nil), // 6: disperser.DispersePaidBlobRequest
 	(*DisperseBlobReply)(nil),       // 7: disperser.DisperseBlobReply
 	(*BlobStatusRequest)(nil),       // 8: disperser.BlobStatusRequest
 	(*BlobStatusReply)(nil),         // 9: disperser.BlobStatusReply
@@ -1552,7 +1552,7 @@ var file_disperser_disperser_proto_goTypes = []interface{}{
 var file_disperser_disperser_proto_depIdxs = []int32{
 	5,  // 0: disperser.AuthenticatedRequest.disperse_request:type_name -> disperser.DisperseBlobRequest
 	4,  // 1: disperser.AuthenticatedRequest.authentication_data:type_name -> disperser.AuthenticationData
-	6,  // 2: disperser.AuthenticatedRequest.paid_disperse_request:type_name -> disperser.PaidDisperseBlobRequest
+	6,  // 2: disperser.AuthenticatedRequest.paid_disperse_request:type_name -> disperser.DispersePaidBlobRequest
 	3,  // 3: disperser.AuthenticatedReply.blob_auth_header:type_name -> disperser.BlobAuthHeader
 	7,  // 4: disperser.AuthenticatedReply.disperse_reply:type_name -> disperser.DisperseBlobReply
 	0,  // 5: disperser.DisperseBlobReply.result:type_name -> disperser.BlobStatus
@@ -1565,12 +1565,12 @@ var file_disperser_disperser_proto_depIdxs = []int32{
 	16, // 12: disperser.BlobVerificationProof.batch_metadata:type_name -> disperser.BatchMetadata
 	17, // 13: disperser.BatchMetadata.batch_header:type_name -> disperser.BatchHeader
 	5,  // 14: disperser.Disperser.DisperseBlob:input_type -> disperser.DisperseBlobRequest
-	6,  // 15: disperser.Disperser.PaidDisperseBlob:input_type -> disperser.PaidDisperseBlobRequest
+	6,  // 15: disperser.Disperser.DispersePaidBlob:input_type -> disperser.DispersePaidBlobRequest
 	1,  // 16: disperser.Disperser.DisperseBlobAuthenticated:input_type -> disperser.AuthenticatedRequest
 	8,  // 17: disperser.Disperser.GetBlobStatus:input_type -> disperser.BlobStatusRequest
 	10, // 18: disperser.Disperser.RetrieveBlob:input_type -> disperser.RetrieveBlobRequest
 	7,  // 19: disperser.Disperser.DisperseBlob:output_type -> disperser.DisperseBlobReply
-	7,  // 20: disperser.Disperser.PaidDisperseBlob:output_type -> disperser.DisperseBlobReply
+	7,  // 20: disperser.Disperser.DispersePaidBlob:output_type -> disperser.DisperseBlobReply
 	2,  // 21: disperser.Disperser.DisperseBlobAuthenticated:output_type -> disperser.AuthenticatedReply
 	9,  // 22: disperser.Disperser.GetBlobStatus:output_type -> disperser.BlobStatusReply
 	11, // 23: disperser.Disperser.RetrieveBlob:output_type -> disperser.RetrieveBlobReply
@@ -1648,7 +1648,7 @@ func file_disperser_disperser_proto_init() {
 			}
 		}
 		file_disperser_disperser_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PaidDisperseBlobRequest); i {
+			switch v := v.(*DispersePaidBlobRequest); i {
 			case 0:
 				return &v.state
 			case 1:

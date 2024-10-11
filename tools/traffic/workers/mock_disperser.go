@@ -33,7 +33,7 @@ func (m *MockDisperserClient) DisperseBlobAuthenticated(
 	return args.Get(0).(*disperser.BlobStatus), args.Get(1).([]byte), args.Error(2)
 }
 
-func (m *MockDisperserClient) PaidDisperseBlob(
+func (m *MockDisperserClient) DispersePaidBlob(
 	ctx context.Context,
 	data []byte,
 	customQuorums []uint8) (*disperser.BlobStatus, []byte, error) {

@@ -15,7 +15,7 @@ service Disperser {
 	// This executes the dispersal async, i.e. it returns once the request
 	// is accepted. The client could use GetBlobStatus() API to poll the the
 	// processing status of the blob.
-	rpc PaidDisperseBlob(PaidDisperseBlobRequest) returns (DisperseBlobReply) {}
+	rpc DispersePaidBlob(DispersePaidBlobRequest) returns (DisperseBlobReply) {}
 
 
 	// DisperseBlobAuthenticated is similar to DisperseBlob, except that it requires the
@@ -48,7 +48,7 @@ message AuthenticatedRequest {
 	oneof payload {
 		DisperseBlobRequest disperse_request = 1;
 		AuthenticationData authentication_data = 2;
-		PaidDisperseBlobRequest paid_disperse_request = 3;
+		DispersePaidBlobRequest paid_disperse_request = 3;
 	}
 }
 
@@ -96,7 +96,7 @@ message DisperseBlobRequest {
 	string account_id = 3;
 }
 
-message PaidDisperseBlobRequest {
+message DispersePaidBlobRequest {
 	// The data to be dispersed.
 	// The size of data must be <= 2MiB. Every 32 bytes of data chunk is interpreted as an integer in big endian format
 	// where the lower address has more significant bits. The integer must stay in the valid range to be interpreted

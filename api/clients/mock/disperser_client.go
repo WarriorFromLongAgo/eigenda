@@ -81,7 +81,7 @@ func (c *MockDisperserClient) DisperseBlob(ctx context.Context, data []byte, quo
 	return status, key, err
 }
 
-func (c *MockDisperserClient) PaidDisperseBlob(ctx context.Context, data []byte, quorums []uint8) (*disperser.BlobStatus, []byte, error) {
+func (c *MockDisperserClient) DispersePaidBlob(ctx context.Context, data []byte, quorums []uint8) (*disperser.BlobStatus, []byte, error) {
 	return nil, nil, nil
 }
 
