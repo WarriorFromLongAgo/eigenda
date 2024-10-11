@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"time"
 
@@ -100,17 +101,20 @@ func RunDisperserServer(ctx *cli.Context) error {
 	var meterer *mt.Meterer
 	if config.EnablePaymentMeterer {
 		mtConfig := mt.Config{
-			PricePerChargeable:   config.PricePerChargeable,
-			GlobalBytesPerSecond: config.OnDemandGlobalLimit,
-			MinChargeableSize:    config.MinChargeableSize,
-			ReservationWindow:    config.ReservationWindow,
+			PricePerSymbol:         config.PricePerSymbol,
+			GlobalSymbolsPerSecond: config.OnDemandGlobalLimit,
+			MinNumSymbols:          config.MinNumSymbols,
+			ChainID:                big.NewInt(int64(config.PaymentChainID)),
+			VerifyingContract:      gethcommon.HexToAddress(config.PaymentContractAddress),
+			ReservationWindow:      config.ReservationWindow,
 		}
 
-		paymentChainState := mt.NewOnchainPaymentState()
+		paymentChainState, err := mt.NewOnchainPaymentState(context.Background(), transactor)
+		if err != nil {
+			return fmt.Errorf("failed to create onchain payment state: %w", err)
+		}
 
-		paymentChainState.InitializeOnchainPaymentState()
-
-		store, err := mt.NewOffchainStore(
+		offchainStore, err := mt.NewOffchainStore(
 			config.AwsClientConfig,
 			"reservations",
 			"ondemand",
@@ -123,9 +127,8 @@ func RunDisperserServer(ctx *cli.Context) error {
 		// add some default sensible configs
 		meterer, err = mt.NewMeterer(
 			mtConfig,
-			mt.TimeoutConfig{},
 			paymentChainState,
-			store,
+			offchainStore,
 			logging.NewNoopLogger(),
 			// metrics.NewNoopMetrics(),
 		)

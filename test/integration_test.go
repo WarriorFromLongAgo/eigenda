@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -28,10 +29,11 @@ import (
 	clientsmock "github.com/Layr-Labs/eigenda/api/clients/mock"
 	commonaws "github.com/Layr-Labs/eigenda/common/aws"
 	commondynamodb "github.com/Layr-Labs/eigenda/common/aws/dynamodb"
+	"github.com/Layr-Labs/eigenda/core/auth"
+	"github.com/Layr-Labs/eigenda/core/meterer"
 	"github.com/Layr-Labs/eigenda/disperser/apiserver"
 	dispatcher "github.com/Layr-Labs/eigenda/disperser/batcher/grpc"
 	"github.com/Layr-Labs/eigenda/disperser/encoder"
-	"github.com/Layr-Labs/eigenda/disperser/meterer"
 	"github.com/Layr-Labs/eigenda/retriever"
 	retrievermock "github.com/Layr-Labs/eigenda/retriever/mock"
 	"github.com/Layr-Labs/eigensdk-go/logging"
@@ -77,7 +79,7 @@ var (
 	dockertestResource *dockertest.Resource
 	dynamoClient       *commondynamodb.Client
 	clientConfig       commonaws.ClientConfig
-	signer             *meterer.EIP712Signer
+	signer             *auth.EIP712Signer
 
 	deployLocalStack bool
 	localStackPort   = "4565"
@@ -212,38 +214,34 @@ func mustMakeDisperser(t *testing.T, cst core.IndexedChainState, store disperser
 	tx.On("GetCurrentBlockNumber").Return(uint64(100), nil)
 	tx.On("GetQuorumCount").Return(1, nil)
 
-	minimumChargeableSize := uint32(128)
-	minimumChargeablePayment := uint32(128)
-	reservationBytesLimit := uint64(1024)
-	paymentLimit := meterer.TokenAmount(512)
+	minimumNumSymbols := uint32(128)
+	pricePerSymbol := uint32(1)
+	reservationLimit := uint64(1024)
+	paymentLimit := core.TokenAmount(512)
 	meterConfig := meterer.Config{
-		GlobalBytesPerSecond: 1024,
-		PricePerChargeable:   minimumChargeablePayment,
-		MinChargeableSize:    minimumChargeableSize,
-		ReservationWindow:    uint32(60),
+		GlobalSymbolsPerSecond: 1024,
+		PricePerSymbol:         pricePerSymbol,
+		MinNumSymbols:          minimumNumSymbols,
+		ReservationWindow:      uint32(60),
 	}
 
-	paymentChainState := meterer.NewOnchainPaymentState()
-
-	paymentChainState.InitializeOnchainPaymentState()
-
-	// TODO: replace with better mocking of payment contract state
-	// Initialize mock active reservations
 	// this is disperser client's private key used in tests
 	privateKey, err := crypto.HexToECDSA("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcded") // Remove "0x" prefix
 	if err != nil {
 		panic("failed to convert hex to ECDSA")
 	}
+	publicKey := crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
+	mockState := &coremock.MockOnchainPaymentState{}
+	mockState.On("GetActiveReservationByAccount", mock.Anything, mock.MatchedBy(func(account string) bool {
+		return account == publicKey
+	})).Return(core.ActiveReservation{SymbolsPerSec: reservationLimit, StartTimestamp: 0, EndTimestamp: math.MaxUint32, QuorumSplit: []byte{50, 50}, QuorumNumbers: []uint8{0, 1}}, nil)
+	mockState.On("GetActiveReservationByAccount", mock.Anything, mock.Anything).Return(core.ActiveReservation{}, errors.New("reservation not found"))
 
-	dummyReservation := meterer.ActiveReservation{DataRate: reservationBytesLimit, StartTimestamp: 0, EndTimestamp: math.MaxUint32, QuorumSplit: []byte{50, 50}, QuorumNumbers: []uint8{0, 1}}
-	dummyOnDemandPayment := meterer.OnDemandPayment{CumulativePayment: paymentLimit}
-
-	paymentChainState.ActiveReservations.Reservations = map[string]*meterer.ActiveReservation{
-		crypto.PubkeyToAddress(privateKey.PublicKey).Hex(): &dummyReservation,
-	}
-	paymentChainState.OnDemandPayments.Payments = map[string]*meterer.OnDemandPayment{
-		crypto.PubkeyToAddress(privateKey.PublicKey).Hex(): &dummyOnDemandPayment,
-	}
+	mockState.On("GetOnDemandPaymentByAccount", mock.Anything, mock.MatchedBy(func(account string) bool {
+		return account == publicKey
+	})).Return(core.OnDemandPayment{CumulativePayment: paymentLimit}, nil)
+	mockState.On("GetOnDemandPaymentByAccount", mock.Anything, mock.Anything).Return(core.OnDemandPayment{}, errors.New("payment not found"))
+	mockState.On("GetOnDemandQuorumNumbers", mock.Anything).Return([]uint8{0, 1}, nil)
 
 	deployLocalStack = !(os.Getenv("DEPLOY_LOCALSTACK") == "false")
 	if !deployLocalStack {
@@ -281,7 +279,7 @@ func mustMakeDisperser(t *testing.T, cst core.IndexedChainState, store disperser
 	if err != nil {
 		panic("failed to create offchain store")
 	}
-	meterer, err := meterer.NewMeterer(meterConfig, meterer.TimeoutConfig{}, paymentChainState, offchainStore, logger)
+	meterer, err := meterer.NewMeterer(meterConfig, mockState, offchainStore, logger)
 	if err != nil {
 		panic("failed to create meterer")
 	}

@@ -648,14 +648,13 @@ func newTestServer(transactor core.Transactor) *apiserver.DispersalServer {
 		panic("failed to create bucket store")
 	}
 	meterConfig := meterer.Config{
-		PricePerChargeable:   1,
-		GlobalBytesPerSecond: 1000,
-		ReservationWindow:    60,
+		PricePerSymbol:         1,
+		MinNumSymbols:          1,
+		GlobalSymbolsPerSecond: 1000,
+		ReservationWindow:      60,
 	}
 
-	paymentChainState := meterer.NewOnchainPaymentState()
-
-	paymentChainState.InitializeOnchainPaymentState()
+	mockState := &mock.MockOnchainPaymentState{}
 
 	clientConfig := commonaws.ClientConfig{
 		Region:          "us-east-1",
@@ -675,7 +674,7 @@ func newTestServer(transactor core.Transactor) *apiserver.DispersalServer {
 		teardown()
 		panic("failed to create offchain store")
 	}
-	meterer, err := meterer.NewMeterer(meterConfig, meterer.TimeoutConfig{}, paymentChainState, store, logger)
+	meterer, err := meterer.NewMeterer(meterConfig, mockState, store, logger)
 	if err != nil {
 		panic("failed to create meterer")
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"math/rand"
 	"net"
 	"slices"
@@ -304,7 +303,7 @@ func (s *DispersalServer) disperseBlob(ctx context.Context, blob *core.Blob, aut
 	}, nil
 }
 
-func (s *DispersalServer) PaidDisperseBlob(ctx context.Context, req *pb.PaidDisperseBlobRequest) (*pb.DisperseBlobReply, error) {
+func (s *DispersalServer) PaidDisperseBlob(ctx context.Context, req *pb.DispersePaidBlobRequest) (*pb.DisperseBlobReply, error) {
 	blob, err := s.validatePaidRequestAndGetBlob(ctx, req)
 	quorumNumbers := req.CustomQuorumNumbers
 	binIndex := req.BinIndex
@@ -360,14 +359,12 @@ func (s *DispersalServer) paidDisperseBlob(ctx context.Context, blob *core.Blob,
 	if s.meterer != nil {
 		fmt.Println("Metering the request; lots of temporarily code")
 		//TODO: blob request header needs to be updated for payments; here we create a placeholder
-		commitment := core.NewG1Point(big.NewInt(0), big.NewInt(1))
 		qn := make([]uint8, len(quorumNumbers))
 		// don't care about higher bites. need to unify quorum number types
 		for i, v := range quorumNumbers {
 			qn[i] = uint8(v)
 		}
-		paymentHeader := meterer.BlobHeader{
-			Commitment:    *commitment,
+		paymentHeader := core.PaymentMetadata{
 			DataLength:    uint32(blobSize),
 			QuorumNumbers: qn,
 			AccountID:     blob.RequestHeader.AccountID,
@@ -1121,7 +1118,7 @@ func (s *DispersalServer) validateRequestAndGetBlob(ctx context.Context, req *pb
 	return blob, nil
 }
 
-func (s *DispersalServer) validatePaidRequestAndGetBlob(ctx context.Context, req *pb.PaidDisperseBlobRequest) (*core.Blob, error) {
+func (s *DispersalServer) validatePaidRequestAndGetBlob(ctx context.Context, req *pb.DispersePaidBlobRequest) (*core.Blob, error) {
 
 	data := req.GetData()
 	blobSize := len(data)
