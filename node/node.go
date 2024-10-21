@@ -77,48 +77,49 @@ func NewNode(reg *prometheus.Registry, config *Config, pubIPProvider pubip.Provi
 	// if err != nil {
 	// 	return nil, err
 	// }
-
+	// 设置指标
 	eigenMetrics := metrics.NewEigenMetrics(AppName, ":"+config.MetricsPort, reg, logger.With("component", "EigenMetrics"))
 	rpcCallsCollector := rpccalls.NewCollector(AppName, reg)
 
 	// Generate BLS keys
+	// 生成BLS密钥对
 	keyPair, err := core.MakeKeyPairFromString(config.PrivateBls)
 	if err != nil {
 		return nil, err
 	}
-
+	// 设置操作员ID
 	config.ID = keyPair.GetPubKeyG1().GetOperatorID()
-
+	// 确保配置文件夹存在
 	// Make sure config folder exists.
 	err = os.MkdirAll(config.DbPath, os.ModePerm)
 	if err != nil {
 		return nil, fmt.Errorf("could not create db directory at %s: %w", config.DbPath, err)
 	}
-
+	// 创建以太坊客户端
 	client, err := geth.NewInstrumentedEthClient(config.EthClientConfig, rpcCallsCollector, logger)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create chain.Client: %w", err)
 	}
-
+	// 获取链ID
 	chainID, err := client.ChainID(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chainID: %w", err)
 	}
-
+	// 创建交易器，创建各种合约的客户端
 	// Create Transactor
 	tx, err := eth.NewTransactor(logger, client, config.BLSOperatorStateRetrieverAddr, config.EigenDAServiceManagerAddr)
 	if err != nil {
 		return nil, err
 	}
-
+	// 创建链状态客户端
 	// Create ChainState Client
 	cst := eth.NewChainState(tx, client)
-
+	// 设置节点API
 	// Setup Node Api
 	nodeApi := nodeapi.NewNodeApi(AppName, SemVer, ":"+config.NodeApiPort, logger.With("component", "NodeApi"))
 
 	metrics := NewMetrics(eigenMetrics, reg, logger, ":"+config.MetricsPort, config.ID, config.OnchainMetricsInterval, tx, cst)
-
+	// 创建验证器
 	// Make validator
 	v, err := verifier.NewVerifier(&config.EncoderConfig, false)
 	if err != nil {
@@ -147,23 +148,26 @@ func NewNode(reg *prometheus.Registry, config *Config, pubIPProvider pubip.Provi
 		}
 		storeDurationBlocks = storeDuration
 	}
+	// 创建新的存储 LevelDBStore
 	// Create new store
 	store, err := NewLevelDBStore(config.DbPath+"/chunk", logger, metrics, blockStaleMeasure, storeDurationBlocks)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new store: %w", err)
 	}
 
+	// 创建操作员套接字过滤器
 	eigenDAServiceManagerAddr := gethcommon.HexToAddress(config.EigenDAServiceManagerAddr)
 	socketsFilterer, err := indexer.NewOperatorSocketsFilterer(eigenDAServiceManagerAddr, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new operator sockets filterer: %w", err)
 	}
+	// 创建节点日志记录器并记录节点创建信息
 	nodeLogger := logger.With("component", "Node")
 	nodeLogger.Info("Creating node", "chainID", chainID.String(), "operatorID", config.ID.Hex(),
 		"dispersalPort", config.DispersalPort, "retrievalPort", config.RetrievalPort, "churnerUrl", config.ChurnerUrl,
 		"quorumIDs", fmt.Sprint(config.QuorumIDList), "registerNodeAtStart", config.RegisterNodeAtStart, "pubIPCheckInterval", config.PubIPCheckInterval,
 		"eigenDAServiceManagerAddr", config.EigenDAServiceManagerAddr, "blockStaleMeasure", blockStaleMeasure, "storeDurationBlocks", storeDurationBlocks, "enableGnarkBundleEncoding", config.EnableGnarkBundleEncoding)
-
+	// 创建并返回新的Node实例
 	return &Node{
 		Config:                  config,
 		Logger:                  nodeLogger,
@@ -183,31 +187,38 @@ func NewNode(reg *prometheus.Registry, config *Config, pubIPProvider pubip.Provi
 // Starts the Node. If the node is not registered, register it on chain, otherwise just
 // update its socket on chain.
 func (n *Node) Start(ctx context.Context) error {
+	// 如果启用了指标，开始收集指标
 	if n.Config.EnableMetrics {
 		n.Metrics.Start()
 		n.Logger.Info("Enabled metrics", "socket", n.Metrics.socketAddr)
 	}
+	// 如果启用了节点API，启动API服务
 	if n.Config.EnableNodeApi {
 		n.NodeApi.Start()
 		n.Logger.Info("Enabled node api", "port", n.Config.NodeApiPort)
 	}
-
+	// 启动后台任务：过期循环和节点可达性检查
 	go n.expireLoop()
 	go n.checkNodeReachability()
-
+	// 根据配置创建操作员套接字
 	// Build the socket based on the hostname/IP provided in the CLI
 	socket := string(core.MakeOperatorSocket(n.Config.Hostname, n.Config.DispersalPort, n.Config.RetrievalPort))
 	var operator *Operator
+	// 如果配置为启动时注册节点
 	if n.Config.RegisterNodeAtStart {
+		// 记录注册信息
 		n.Logger.Info("Registering node on chain with the following parameters:", "operatorId",
 			n.Config.ID.Hex(), "hostname", n.Config.Hostname, "dispersalPort", n.Config.DispersalPort,
 			"retrievalPort", n.Config.RetrievalPort, "churnerUrl", n.Config.ChurnerUrl, "quorumIds", fmt.Sprint(n.Config.QuorumIDList))
 		socket := string(core.MakeOperatorSocket(n.Config.Hostname, n.Config.DispersalPort, n.Config.RetrievalPort))
+		// 解析私钥
 		privateKey, err := crypto.HexToECDSA(n.Config.EthClientConfig.PrivateKeyString)
 		if err != nil {
 			return fmt.Errorf("NewClient: cannot parse private key: %w", err)
 		}
+		// 创建操作员对象
 		operator = &Operator{
+			// ... 设置操作员属性
 			Address:             crypto.PubkeyToAddress(privateKey.PublicKey).Hex(),
 			Socket:              socket,
 			Timeout:             10 * time.Second,
@@ -217,7 +228,10 @@ func (n *Node) Start(ctx context.Context) error {
 			QuorumIDs:           n.Config.QuorumIDList,
 			RegisterNodeAtStart: n.Config.RegisterNodeAtStart,
 		}
+		// 创建churner客户端
+		// 在EigenDA（或类似的去中心化系统）中，Churner通常负责管理节点的注册、退出和状态更新等操作。
 		churnerClient := NewChurnerClient(n.Config.ChurnerUrl, n.Config.UseSecureGrpc, n.Config.Timeout, n.Logger)
+		// 注册操作员
 		err = RegisterOperator(ctx, operator, n.Transactor, churnerClient, n.Logger)
 		if err != nil {
 			return fmt.Errorf("failed to register the operator: %w", err)
@@ -230,7 +244,7 @@ func (n *Node) Start(ctx context.Context) error {
 			n.Logger.Infof("The node has started but the network with chainID %s is not supported yet", n.ChainID.String())
 		}
 	}
-
+	// 验证操作员ID（如果操作员存在）
 	if operator != nil && operator.Address != "" {
 		operatorID, err := n.Transactor.OperatorAddressToID(ctx, gethcommon.HexToAddress(operator.Address))
 		if err != nil {
@@ -240,9 +254,10 @@ func (n *Node) Start(ctx context.Context) error {
 			return fmt.Errorf("operator ID mismatch: expected %s, got %s", operator.OperatorId.Hex(), operatorID.Hex())
 		}
 	}
-
+	// 设置当前套接字
 	n.CurrentSocket = socket
 	// Start the Node IP updater only if the PUBLIC_IP_PROVIDER is greater than 0.
+	// 如果配置了公共IP检查间隔，启动IP更新任务
 	if n.Config.PubIPCheckInterval > 0 {
 		go n.checkRegisteredNodeIpOnChain(ctx)
 		go n.checkCurrentNodeIp(ctx)
@@ -253,6 +268,7 @@ func (n *Node) Start(ctx context.Context) error {
 
 // The expireLoop is a loop that is run once per configured second(s) while the node
 // is running. It scans for expired batches and removes them from the local database.
+// expireLoop 是节点运行时每配置秒运行一次的循环。它会扫描过期的批次并将其从本地数据库中删除。
 func (n *Node) expireLoop() {
 	n.Logger.Info("Start expireLoop goroutine in background to periodically remove expired batches on the node")
 	ticker := time.NewTicker(time.Duration(n.Config.ExpirationPollIntervalSec) * time.Second)
@@ -287,6 +303,16 @@ func (n *Node) expireLoop() {
 //   - If the batch is stored already, it's no-op to store it more than once
 //   - If the batch is stored, but the processing fails after that, these data items will not be rollback
 //   - These data items will be garbage collected eventually when they become stale.
+//
+// ProcessBatch 验证批次是否正确，将数据存储到节点的存储中，然后返回整个批次的签名。
+//
+// 批次将被细分为批次头、批次中每个 blob 的头和块。这些项目将
+// 以原子方式存储到数据库中。
+//
+// 注意事项：
+// - 如果批次已存储，则多次存储它是无操作的
+// - 如果批次已存储，但之后处理失败，则这些数据项将不会回滚
+// - 这些数据项最终将在它们过时时被垃圾收集。
 func (n *Node) ProcessBatch(ctx context.Context, header *core.BatchHeader, blobs []*core.BlobMessage, rawBlobs []*node.Blob) (*core.Signature, error) {
 	start := time.Now()
 	log := n.Logger
@@ -399,6 +425,14 @@ func (n *Node) ProcessBatch(ctx context.Context, header *core.BatchHeader, blobs
 //   - If the blob is stored already, it's no-op to store it more than once
 //   - If the blob is stored, but the processing fails after that, these data items will not be rollback
 //   - These data items will be garbage collected eventually when they become stale.
+//
+// ProcessBlobs 验证 blob 是否正确，将数据存储到节点的 Store 中，然后为每个 blob 返回一个签名。
+// 此方法类似于 ProcessBatch 方法，只是它不需要批处理。
+//
+// 注意事项：
+// - 如果 blob 已存储，则多次存储它是无操作的
+// - 如果 blob 已存储，但之后处理失败，则这些数据项将不会回滚
+// - 这些数据项最终将在它们过时时被垃圾收集。
 func (n *Node) ProcessBlobs(ctx context.Context, blobs []*core.BlobMessage, rawBlobs []*node.Blob) ([]*core.Signature, error) {
 	start := time.Now()
 	log := n.Logger
@@ -712,7 +746,9 @@ type OperatorReachabilityResponse struct {
 	RetrievalOnline bool   `json:"retrieval_online"`
 }
 
+// checkNodeReachability 定期检查节点的可达性。
 func (n *Node) checkNodeReachability() {
+	// 如果ReachabilityPollIntervalSec设置为0，则禁用可达性检查。
 	if n.Config.ReachabilityPollIntervalSec == 0 {
 		n.Logger.Warn("Node reachability checks disabled!!! ReachabilityPollIntervalSec set to 0")
 		return
@@ -730,6 +766,7 @@ func (n *Node) checkNodeReachability() {
 	}
 
 	n.Logger.Info("Start nodeReachabilityCheck goroutine in background to check the reachability of the operator node")
+	// 使用ticker定期执行检查。
 	ticker := time.NewTicker(time.Duration(n.Config.ReachabilityPollIntervalSec) * time.Second)
 	defer ticker.Stop()
 
@@ -737,7 +774,7 @@ func (n *Node) checkNodeReachability() {
 		<-ticker.C
 
 		n.Logger.Debug("Calling reachability check", "url", checkURL)
-
+		// 向检查URL发送GET请求。
 		resp, err := http.Get(checkURL)
 		if err != nil {
 			n.Logger.Error("Reachability check request failed", err)

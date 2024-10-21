@@ -59,7 +59,7 @@ func NewLevelDBStore(path string, logger logging.Logger, metrics *Metrics, block
 	}, nil
 }
 
-// Delete expired entries in the store.
+// DeleteExpiredEntries Delete expired entries in the store.
 // An entry is expired if its expiry <= currentTimeUnixSec, where expiry and
 // currentTimeUnixSec are time since Unix epoch (in seconds).
 // The deletion of a batch is done atomically, i.e. either all or none entries of a batch will be deleted.
@@ -67,6 +67,12 @@ func NewLevelDBStore(path string, logger logging.Logger, metrics *Metrics, block
 // The function returns the number of batches deleted and the status of deletion. Note that the
 // number of batches deleted can be positive even if the status is error (e.g. the error happened
 // after it had successfully deleted some batches).
+// DeleteExpiredEntries 删除存储中的过期条目。
+// 如果条目的过期时间 <= currentTimeUnixSec，则该条目已过期，其中过期时间和
+// currentTimeUnixSec 是自 Unix 纪元以来的时间（以秒为单位）。
+// 批次的删除是原子操作，即，要么删除批次中的所有条目，要么不删除任何条目。
+// 如果函数在 timeLimitSec 秒后无法完成，则将以超出截止期限错误退出。
+// 该函数返回已删除的批次数和删除状态。请注意，即使状态为错误（例如，在成功删除某些批次后发生错误），删除的批次数也可能为正数。
 func (s *Store) DeleteExpiredEntries(currentTimeUnixSec int64, timeLimitSec uint64) (numBatchesDeleted int, numMappingsDeleted int, numBlobsDeleted int, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeLimitSec)*time.Second)
 	defer cancel()
@@ -79,18 +85,19 @@ func (s *Store) DeleteExpiredEntries(currentTimeUnixSec int64, timeLimitSec uint
 		case <-ctx.Done():
 			return totalBatchesDeleted, totalMappingsDeleted, totalBlobsDeleted, ctx.Err()
 		default:
+			// 删除过期的blob数据。。可能直接以键值对的形式存储在LevelDB中。
 			blobsDeleted, err := s.deleteExpiredBlobs(currentTimeUnixSec, numBatchesToDeleteAtomically)
 			if err != nil {
 				return totalBatchesDeleted, totalMappingsDeleted, totalBlobsDeleted, err
 			}
 			totalBlobsDeleted += blobsDeleted
-
+			// 删除过期的批次数据。。可能直接以键值对的形式存储在LevelDB中。
 			batchesDeleted, err := s.deleteNBatches(currentTimeUnixSec, numBatchesToDeleteAtomically)
 			if err != nil {
 				return totalBatchesDeleted, totalMappingsDeleted, totalBlobsDeleted, err
 			}
 			totalBatchesDeleted += batchesDeleted
-
+			// 删除过期的批次映射数据。。可能直接以键值对的形式存储在LevelDB中。
 			mappingsDeleted, batchesDeleted, err := s.deleteExpiredBatchMapping(currentTimeUnixSec, numBatchesToDeleteAtomically)
 			if err != nil {
 				return totalBatchesDeleted, totalMappingsDeleted, totalBlobsDeleted, err

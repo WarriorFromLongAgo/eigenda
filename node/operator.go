@@ -27,9 +27,11 @@ type Operator struct {
 
 // RegisterOperator operator registers the operator with the given public key for the given quorum IDs.
 func RegisterOperator(ctx context.Context, operator *Operator, transactor core.Transactor, churnerClient ChurnerClient, logger logging.Logger) error {
+	// 检查提供的quorum IDs数量是否合法。
 	if len(operator.QuorumIDs) > 1+core.MaxQuorumID {
 		return fmt.Errorf("cannot provide more than %d quorums", 1+core.MaxQuorumID)
 	}
+	// 调用getQuorumIdsToRegister方法获取需要注册的quorum IDs。
 	quorumsToRegister, err := operator.getQuorumIdsToRegister(ctx, transactor)
 	if err != nil {
 		return fmt.Errorf("failed to get quorum ids to register: %w", err)
@@ -50,6 +52,7 @@ func RegisterOperator(ctx context.Context, operator *Operator, transactor core.T
 	shouldCallChurner := false
 	// check if one of the quorums to register for is full
 	for _, quorumID := range quorumsToRegister {
+		// 遍历每个要注册的quorum，检查是否已满。
 		operatorSetParams, err := transactor.GetOperatorSetParams(ctx, quorumID)
 		if err != nil {
 			return err
@@ -76,17 +79,21 @@ func RegisterOperator(ctx context.Context, operator *Operator, transactor core.T
 	copy(salt[:], crypto.Keccak256([]byte("churn"), []byte(time.Now().String()), quorumsToRegister, privateKeyBytes))
 
 	// Get the current block number
+	// 使用当前时间、quorum IDs和私钥生成一个唯一的salt。 设置10分钟后的过期时间。
 	expiry := big.NewInt((time.Now().Add(10 * time.Minute)).Unix())
 
 	// if we should call the churner, call it
+	// 如果需要churner：
 	if shouldCallChurner {
+		// 调用churner客户端的Churn方法获取churn批准。
 		churnReply, err := churnerClient.Churn(ctx, operator.Address, operator.KeyPair, quorumsToRegister)
 		if err != nil {
 			return fmt.Errorf("failed to request churn approval: %w", err)
 		}
-
+		// 使用RegisterOperatorWithChurn方法注册操作员。
 		return transactor.RegisterOperatorWithChurn(ctx, operator.KeyPair, operator.Socket, quorumsToRegister, operator.PrivKey, salt, expiry, churnReply)
 	} else {
+		// 直接使用RegisterOperator方法注册操作员。
 		// other wise just register normally
 		return transactor.RegisterOperator(ctx, operator.KeyPair, operator.Socket, quorumsToRegister, operator.PrivKey, salt, expiry)
 	}

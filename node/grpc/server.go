@@ -208,7 +208,7 @@ func (s *Server) validateStoreBlobsRequest(in *pb.StoreBlobsRequest) error {
 
 func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.StoreBlobsReply, error) {
 	start := time.Now()
-
+	// 调用validateStoreBlobsRequest方法验证输入请求的有效性。
 	err := s.validateStoreBlobsRequest(in)
 	if err != nil {
 		return nil, err
@@ -225,6 +225,7 @@ func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.
 	s.node.Logger.Info("StoreBlobs RPC request received", "numBlobs", len(in.Blobs), "reqMsgSize", proto.Size(in), "blobHeadersSize", blobHeadersSize, "bundleSize", bundleSize, "referenceBlockNumber", in.GetReferenceBlockNumber())
 
 	// Process the request
+	// 调用node.GetBlobMessages方法将请求中的blob数据反序列化为内部使用的BlobMessage结构。
 	blobs, err := node.GetBlobMessages(in.GetBlobs(), s.node.Config.NumBatchDeserializationWorkers)
 	if err != nil {
 		return nil, err
@@ -232,7 +233,8 @@ func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.
 
 	s.node.Metrics.ObserveLatency("StoreBlobs", "deserialization", float64(time.Since(start).Milliseconds()))
 	s.node.Logger.Info("StoreBlobsRequest deserialized", "duration", time.Since(start))
-
+	// 调用node.ProcessBlobs方法处理这些blob。
+	// ProcessBlobs方法返回处理后的签名。
 	signatures, err := s.node.ProcessBlobs(ctx, blobs, in.GetBlobs())
 	if err != nil {
 		return nil, err
@@ -246,7 +248,7 @@ func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.
 		}
 		signaturesBytes[i] = wrapperspb.Bytes(sig.Serialize())
 	}
-
+	// 创建并返回一个包含签名的StoreBlobsReply对象。
 	return &pb.StoreBlobsReply{Signatures: signaturesBytes}, nil
 }
 
@@ -263,26 +265,31 @@ func (s *Server) AttestBatch(ctx context.Context, in *pb.AttestBatchRequest) (*p
 		copy(h[:], hash)
 		blobHeaderHashes[i] = h
 	}
+	// 使用node.GetBatchHeader方法从输入中解析批次头部信息。
 	batchHeader, err := node.GetBatchHeader(in.GetBatchHeader())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get the batch header: %w", err)
 	}
+	// 调用node.ValidateBatchContents方法验证批次头部和blob头部哈希的一致性。
 	err = s.node.ValidateBatchContents(ctx, blobHeaderHashes, batchHeader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate the batch header root: %w", err)
 	}
 
 	// Store the mapping from batch header + blob index to blob header hashes
+	// 使用node.Store.StoreBatchBlobMapping方法存储批次头部和blob头部哈希之间的映射关系。
 	err = s.node.Store.StoreBatchBlobMapping(ctx, batchHeader, blobHeaderHashes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store the batch blob mapping: %w", err)
 	}
 
 	// Sign the batch header
+	// 计算批次头部的哈希。
 	batchHeaderHash, err := batchHeader.GetBatchHeaderHash()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get the batch header hash: %w", err)
 	}
+	// 使用节点的密钥对对批次头部哈希进行签名。
 	sig := s.node.KeyPair.SignMessage(batchHeaderHash)
 
 	s.node.Logger.Info("AttestBatch complete", "duration", time.Since(start))
@@ -293,28 +300,29 @@ func (s *Server) AttestBatch(ctx context.Context, in *pb.AttestBatchRequest) (*p
 
 func (s *Server) RetrieveChunks(ctx context.Context, in *pb.RetrieveChunksRequest) (*pb.RetrieveChunksReply, error) {
 	start := time.Now()
-
+	// 检查quorum ID是否在有效范围内。
 	if in.GetQuorumId() > core.MaxQuorumID {
 		return nil, fmt.Errorf("invalid request: quorum ID must be in range [0, %d], but found %d", core.MaxQuorumID, in.GetQuorumId())
 	}
 
 	var batchHeaderHash [32]byte
 	copy(batchHeaderHash[:], in.GetBatchHeaderHash())
-
+	// 使用getBlobHeader方法获取与给定批次头部哈希和blob索引相关的blob头部信息。
 	blobHeader, _, err := s.getBlobHeader(ctx, batchHeaderHash, int(in.GetBlobIndex()))
 	if err != nil {
 		return nil, err
 	}
-
+	// 从上下文中获取客户端地址作为请求者ID。
 	retrieverID, err := common.GetClientAddress(ctx, s.config.ClientIPHeader, 1, false)
 	if err != nil {
 		return nil, err
 	}
-
+	// 从blob头部获取指定quorum ID的信息。
 	quorumInfo := blobHeader.GetQuorumInfo(uint8(in.GetQuorumId()))
 	if quorumInfo == nil {
 		return nil, fmt.Errorf("invalid request: quorum ID %d not found in blob header", in.GetQuorumId())
 	}
+	// 计算编码后的blob大小和速率。
 	encodedBlobSize := encoding.GetBlobSize(encoding.GetEncodedBlobLength(blobHeader.Length, quorumInfo.ConfirmationThreshold, quorumInfo.AdversaryThreshold))
 	rate := quorumInfo.QuorumRate
 
@@ -335,12 +343,13 @@ func (s *Server) RetrieveChunks(ctx context.Context, in *pb.RetrieveChunksReques
 	if !allow {
 		return nil, errors.New("request rate limited")
 	}
-
+	// 从存储中获取指定的数据块。
 	chunks, format, err := s.node.Store.GetChunks(ctx, batchHeaderHash, int(in.GetBlobIndex()), uint8(in.GetQuorumId()))
 	if err != nil {
 		s.node.Metrics.RecordRPCRequest("RetrieveChunks", "failure", time.Since(start))
 		return nil, fmt.Errorf("could not find chunks for batchHeaderHash %v, blob index: %v, quorumID: %v", hex.EncodeToString(batchHeaderHash[:]), in.GetBlobIndex(), in.GetQuorumId())
 	}
+	// 如果存储的数据块使用Gnark编码但配置不支持，则将其转换回Gob编码。
 	if !s.config.EnableGnarkBundleEncoding && format == pb.ChunkEncodingFormat_GNARK {
 		s.node.Logger.Info("Converting chunks from Gnark back to Gob", "batchHeaderHash", hex.EncodeToString(batchHeaderHash[:]), "blobIndex", in.GetBlobIndex(), "quorumId", in.GetQuorumId())
 		format = pb.ChunkEncodingFormat_GOB
@@ -363,28 +372,31 @@ func (s *Server) RetrieveChunks(ctx context.Context, in *pb.RetrieveChunksReques
 		chunks = gobChunks
 	}
 	s.node.Metrics.RecordRPCRequest("RetrieveChunks", "success", time.Since(start))
+	// 创建并返回一个包含检索到的数据块和编码格式的RetrieveChunksReply对象。
 	return &pb.RetrieveChunksReply{Chunks: chunks, ChunkEncodingFormat: format}, nil
 }
 
 func (s *Server) GetBlobHeader(ctx context.Context, in *pb.GetBlobHeaderRequest) (*pb.GetBlobHeaderReply, error) {
 	var batchHeaderHash [32]byte
 	copy(batchHeaderHash[:], in.GetBatchHeaderHash())
-
+	// 使用getBlobHeader方法获取与给定批次头部哈希和blob索引相关的blob头部信息。
+	// 这个方法返回两种格式的blob头部：一个是内部使用的结构，另一个是protobuf格式。
 	blobHeader, protoBlobHeader, err := s.getBlobHeader(ctx, batchHeaderHash, int(in.GetBlobIndex()))
 	if err != nil {
 		return nil, err
 	}
-
+	// 使用GetBlobHeaderHash方法计算blob头部的哈希值。
 	blobHeaderHash, err := blobHeader.GetBlobHeaderHash()
 	if err != nil {
 		return nil, err
 	}
-
+	// 调用rebuildMerkleTree方法，使用给定的批次头部哈希重建Merkle树。 这个树可能包含了批次中所有blob头部的哈希。
 	tree, err := s.rebuildMerkleTree(batchHeaderHash)
 	if err != nil {
 		return nil, err
 	}
-
+	// 使用重建的Merkle树，为特定的blob头部哈希生成一个Merkle证明。
+	// 这个证明可以用来验证这个blob头部确实属于这个批次。
 	proof, err := tree.GenerateProof(blobHeaderHash[:], 0)
 	if err != nil {
 		return nil, err

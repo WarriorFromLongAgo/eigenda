@@ -117,9 +117,10 @@ func (t *Transactor) getRegistrationParams(
 	operatorToAvsRegistrationSigSalt [32]byte,
 	operatorToAvsRegistrationSigExpiry *big.Int,
 ) (*regcoordinator.IBLSApkRegistryPubkeyRegistrationParams, *regcoordinator.ISignatureUtilsSignatureWithSaltAndExpiry, error) {
-
+	// 使用以太坊客户端获取操作员的地址。
 	operatorAddress := t.EthClient.GetAccountAddress()
-
+	// 调用RegistryCoordinator合约获取需要签名的消息哈希。
+	// 使用操作员的密钥对签名这个哈希消息。
 	msgToSignG1_, err := t.Bindings.RegistryCoordinator.PubkeyRegistrationMessageHash(&bind.CallOpts{
 		Context: ctx,
 	}, operatorAddress)
@@ -127,6 +128,7 @@ func (t *Transactor) getRegistrationParams(
 		return nil, nil, err
 	}
 
+	// 将操作员的G1和G2公钥转换为合约所需的格式。
 	msgToSignG1 := core.NewG1Point(msgToSignG1_.X, msgToSignG1_.Y)
 	signature := keypair.SignHashedToCurveMessage(msgToSignG1)
 
@@ -145,13 +147,14 @@ func (t *Transactor) getRegistrationParams(
 		X: g2Point_.X,
 		Y: g2Point_.Y,
 	}
-
+	// 包括签名后的消息哈希、G1公钥和G2公钥。
 	params := regcoordinator.IBLSApkRegistryPubkeyRegistrationParams{
 		PubkeyRegistrationSignature: signedMessageHashParam,
 		PubkeyG1:                    g1Point,
 		PubkeyG2:                    g2Point,
 	}
-
+	// 调用AVSDirectory合约计算操作员-AVS注册摘要哈希。
+	// 使用操作员的ECDSA私钥签名这个摘要。
 	// params to register operator in delegation manager's operator-avs mapping
 	msgToSign, err := t.Bindings.AVSDirectory.CalculateOperatorAVSRegistrationDigestHash(
 		&bind.CallOpts{
@@ -167,13 +170,14 @@ func (t *Transactor) getRegistrationParams(
 	// this is annoying, and not sure why its needed, but seems like some historical baggage
 	// see https://github.com/ethereum/go-ethereum/issues/28757#issuecomment-1874525854
 	// and https://twitter.com/pcaversaccio/status/1671488928262529031
+	// 对ECDSA签名进行特殊处理（加27到最后一个字节），这是为了兼容以太坊的历史遗留问题。
 	operatorSignature[64] += 27
 	operatorSignatureWithSaltAndExpiry := regcoordinator.ISignatureUtilsSignatureWithSaltAndExpiry{
 		Signature: operatorSignature,
 		Salt:      operatorToAvsRegistrationSigSalt,
 		Expiry:    operatorToAvsRegistrationSigExpiry,
 	}
-
+	// 包括BLS公钥注册参数和AVS注册签名。
 	return &params, &operatorSignatureWithSaltAndExpiry, nil
 
 }
@@ -192,27 +196,30 @@ func (t *Transactor) RegisterOperator(
 	operatorToAvsRegistrationSigSalt [32]byte,
 	operatorToAvsRegistrationSigExpiry *big.Int,
 ) error {
-
+	// 调用getRegistrationParams方法获取注册所需的参数和操作员签名。
 	params, operatorSignature, err := t.getRegistrationParams(ctx, keypair, operatorEcdsaPrivateKey, operatorToAvsRegistrationSigSalt, operatorToAvsRegistrationSigExpiry)
 	if err != nil {
 		t.Logger.Error("Failed to get registration params", "err", err)
 		return err
 	}
-
+	// 将quorum IDs转换为quorum numbers（可能是为了符合智能合约的要求）。
 	quorumNumbers := quorumIDsToQuorumNumbers(quorumIds)
+	// 使用GetNoSendTransactOpts获取交易选项，这可能包括gas价格、gas限制等。
 	opts, err := t.EthClient.GetNoSendTransactOpts()
 	if err != nil {
 		t.Logger.Error("Failed to generate transact opts", "err", err)
 		return err
 	}
-
+	// 调用RegistryCoordinator合约的RegisterOperator函数创建一个注册操作员的交易。
+	// 传入quorum numbers、socket（可能是操作员的网络地址）、注册参数和操作员签名。
 	tx, err := t.Bindings.RegistryCoordinator.RegisterOperator(opts, quorumNumbers, socket, *params, *operatorSignature)
 
 	if err != nil {
 		t.Logger.Error("Failed to register operator", "err", err)
 		return err
 	}
-
+	// 使用EstimateGasPriceAndLimitAndSendTx方法估算交易的gas价格和限制，并发送交易。
+	// 这一步骤可能包括自动调整gas价格以确保交易能够被及时处理。
 	_, err = t.EthClient.EstimateGasPriceAndLimitAndSendTx(context.Background(), tx, "RegisterOperatorWithCoordinator1", nil)
 	if err != nil {
 		t.Logger.Error("Failed to estimate gas price and limit", "err", err)
