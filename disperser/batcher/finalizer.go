@@ -26,6 +26,7 @@ type Finalizer interface {
 	FinalizeBlobs(ctx context.Context) error
 }
 
+// 实现了 finalizer 结构体，包含了各种必要的字段，如超时时间、循环间隔、blob 存储、以太坊客户端等。
 type finalizer struct {
 	timeout              time.Duration
 	loopInterval         time.Duration
@@ -65,7 +66,9 @@ func NewFinalizer(
 	}
 }
 
+// Start 主要用于处理和最终确认（finalize）已经被确认（confirmed）的数据块（blobs）
 func (f *finalizer) Start(ctx context.Context) {
+	//启动一个后台 goroutine，定期调用 FinalizeBlobs 方法。
 	go func() {
 		ticker := time.NewTicker(f.loopInterval)
 		defer ticker.Stop()
@@ -86,9 +89,13 @@ func (f *finalizer) Start(ctx context.Context) {
 // FinalizeBlobs checks the latest finalized block and marks blobs in `confirmed` state as `finalized` if their confirmation
 // block number is less than or equal to the latest finalized block number.
 // If it failes to process some blobs, it will log the error, skip the failed blobs, and will not return an error. The function should be invoked again to retry.
+// FinalizeBlobs 检查最新的最终确定块，如果其确认
+// 块号小于或等于最新的最终确定块号，则将处于“已确认”状态的 blob 标记为“已确定”。
+// 如果无法处理某些 blob，它将记录错误，跳过失败的 blob，并且不会返回错误。应再次调用该函数进行重试。
 func (f *finalizer) FinalizeBlobs(ctx context.Context) error {
 	startTime := time.Now()
 	pool := workerpool.New(f.numWorkers)
+	// 获取最新的已最终确认的区块。
 	finalizedHeader, err := f.getLatestFinalizedBlock(ctx)
 	if err != nil {
 		return fmt.Errorf("FinalizeBlobs: error getting latest finalized block: %w", err)
@@ -96,6 +103,7 @@ func (f *finalizer) FinalizeBlobs(ctx context.Context) error {
 	lastFinalBlock := finalizedHeader.Number.Uint64()
 
 	totalProcessed := 0
+	// 从存储中获取状态为 "已确认" 的 blob 元数据。
 	metadatas, exclusiveStartKey, err := f.blobStore.GetBlobMetadataByStatusWithPagination(ctx, disperser.Confirmed, f.numBlobsPerFetch, nil)
 	if err != nil {
 		return fmt.Errorf("FinalizeBlobs: error getting blob headers: %w", err)
@@ -104,6 +112,7 @@ func (f *finalizer) FinalizeBlobs(ctx context.Context) error {
 	for len(metadatas) > 0 {
 		metas := metadatas
 		f.logger.Info("finalizing blobs", "numBlobs", len(metas), "finalizedBlockNumber", lastFinalBlock)
+		// 使用工作池并行处理这些 blob。
 		pool.Submit(func() {
 			f.updateBlobs(ctx, metas, lastFinalBlock)
 		})
@@ -112,6 +121,7 @@ func (f *finalizer) FinalizeBlobs(ctx context.Context) error {
 		if exclusiveStartKey == nil {
 			break
 		}
+		// 主要用于分页获取特定状态（在这里是 disperser.Confirmed）的 blob 元数据。
 		metadatas, exclusiveStartKey, err = f.blobStore.GetBlobMetadataByStatusWithPagination(ctx, disperser.Confirmed, f.numBlobsPerFetch, exclusiveStartKey)
 		if err != nil {
 			f.logger.Error("error getting blob headers on subsequent call", "err", err)
@@ -127,6 +137,7 @@ func (f *finalizer) FinalizeBlobs(ctx context.Context) error {
 	return nil
 }
 
+// updateBlobs 对每个 blob 进行处理，包括检查确认区块是否已最终确认，处理可能的重组情况，并将符合条件的 blob 标记为已最终确认。
 func (f *finalizer) updateBlobs(ctx context.Context, metadatas []*disperser.BlobMetadata, lastFinalBlock uint64) {
 	// Panic recovery
 	defer func() {

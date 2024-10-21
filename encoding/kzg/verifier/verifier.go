@@ -115,24 +115,28 @@ type ParametrizedVerifier struct {
 	Ks *kzg.KZGSettings
 }
 
+// GetKzgVerifier 主要功能是将接收到的数据块（chunks）解码成原始的数据blob。它使用了Reed-Solomon编码和KZG（Kate-Zaverucha-Goldberg）承诺方案来进行解码。
 func (g *Verifier) GetKzgVerifier(params encoding.EncodingParams) (*ParametrizedVerifier, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	// 验证输入的编码参数是否有效
 	if err := params.Validate(); err != nil {
 		return nil, err
 	}
-
+	// 检查是否已经存在对应参数的验证器
 	ver, ok := g.ParametrizedVerifiers[params]
 	if ok {
+		// 如果存在，直接返回缓存的验证器
 		return ver, nil
 	}
-
+	// 如果不存在，创建新的参数化验证器
 	ver, err := g.newKzgVerifier(params)
 	if err == nil {
+		// 如果创建成功，将新验证器存储在缓存中
 		g.ParametrizedVerifiers[params] = ver
 	}
-
+	// 返回新创建的验证器或错误
 	return ver, err
 }
 
@@ -294,18 +298,22 @@ func VerifyFrame(f *encoding.Frame, ks *kzg.KZGSettings, commitment *bn254.G1Aff
 
 // Decode takes in the chunks, indices, and encoding parameters and returns the decoded blob
 // The result is trimmed to the given maxInputSize.
+// Decode 主要功能是将接收到的数据块（chunks）解码成原始的数据blob。它使用了Reed-Solomon编码和KZG（Kate-Zaverucha-Goldberg）承诺方案来进行解码。
 func (v *Verifier) Decode(chunks []*encoding.Frame, indices []encoding.ChunkNumber, params encoding.EncodingParams, maxInputSize uint64) ([]byte, error) {
+	// 1. 将chunks转换为rs.Frame类型的切片
 	frames := make([]rs.Frame, len(chunks))
 	for i := range chunks {
 		frames[i] = rs.Frame{
 			Coeffs: chunks[i].Coeffs,
 		}
 	}
+	// 2. 获取 给定编码参数 相对应的KZG验证器
 	encoder, err := v.GetKzgVerifier(params)
 	if err != nil {
 		return nil, err
 	}
-
+	// 3. 调用encoder的Decode方法进行实际的解码操作
+	// 这里将chunk索引转换为uint64类型的数组，并传入最大输入大小
 	return encoder.Decode(frames, toUint64Array(indices), maxInputSize)
 }
 

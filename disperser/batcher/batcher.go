@@ -105,6 +105,7 @@ func NewBatcher(
 	metrics *Metrics,
 	heartbeatChan chan time.Time,
 ) (*Batcher, error) {
+	// batchTrigger 是一个 EncodedSizeNotifier 的实例，它用于在编码的数据大小达到特定阈值时触发批处理操作。
 	batchTrigger := NewEncodedSizeNotifier(
 		make(chan struct{}, 1),
 		uint64(config.BatchSizeMBLimit)*1024*1024, // convert to bytes

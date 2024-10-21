@@ -140,6 +140,7 @@ func NewEncodingStreamer(
 }
 
 func (e *EncodingStreamer) Start(ctx context.Context) error {
+	// 创建一个 encoderChan 通道，用于接收编码结果或状态。
 	encoderChan := make(chan EncodingResultOrStatus)
 
 	// goroutine for handling blob encoding responses
@@ -149,8 +150,12 @@ func (e *EncodingStreamer) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case response := <-encoderChan:
+				// 这个 goroutine 持续监听 encoderChan。
+
+				// 当收到响应时，调用 ProcessEncodedBlobs 方法处理编码后的 blob。
 				err := e.ProcessEncodedBlobs(ctx, response)
 				if err != nil {
+					// 处理各种可能的错误情况，如超时、连接重置等。
 					if strings.Contains(err.Error(), context.Canceled.Error()) {
 						// ignore canceled errors because canceled encoding requests are normal
 						continue
@@ -173,6 +178,7 @@ func (e *EncodingStreamer) Start(ctx context.Context) error {
 
 	// goroutine for making blob encoding requests
 	go func() {
+		// 启动主循环，每隔 encodingInterval（2秒）执行一次：
 		ticker := time.NewTicker(encodingInterval)
 		defer ticker.Stop()
 
@@ -181,6 +187,7 @@ func (e *EncodingStreamer) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// 检查是否有新的 blob 需要编码。
 				err := e.RequestEncoding(ctx, encoderChan)
 				if err != nil {
 					e.logger.Warn("error requesting encoding", "err", err)
@@ -215,6 +222,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 	stageTimer := time.Now()
 	// pull new blobs and send to encoder
 	e.mu.Lock()
+	// 从 blobStore 获取状态为 "Processing" 的 blob 元数据。
 	metadatas, newExclusiveStartKey, err := e.blobStore.GetBlobMetadataByStatusWithPagination(ctx, disperser.Processing, int32(e.StreamerConfig.MaxBlobsToFetchFromStore), e.exclusiveStartKey)
 	e.exclusiveStartKey = newExclusiveStartKey
 	e.mu.Unlock()
@@ -248,7 +256,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 			referenceBlockNumber = blockNumber
 		}
 	}
-
+	// 对获取的元数据进行去重处理。
 	e.logger.Debug("metadata in processing status", "numMetadata", len(metadatas))
 	metadatas = e.dedupRequests(metadatas, referenceBlockNumber)
 	if len(metadatas) == 0 {
@@ -257,6 +265,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 	}
 
 	waitingQueueSize := e.Pool.WaitingQueueSize()
+	// 计算可以处理的元数据数量，确保不超过 EncodingQueueLimit。
 	numMetadatastoProcess := e.EncodingQueueLimit - waitingQueueSize
 	if numMetadatastoProcess > len(metadatas) {
 		numMetadatastoProcess = len(metadatas)
@@ -276,10 +285,12 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, e.ChainStateTimeout)
 	defer cancel()
+	// 获取操作员状态（operator state）。
 	state, err := e.getOperatorState(timeoutCtx, metadatas, referenceBlockNumber)
 	if err != nil {
 		return fmt.Errorf("error getting operator state: %w", err)
 	}
+	// 验证元数据的 quorum 信息。
 	metadatas = e.validateMetadataQuorums(metadatas, state)
 
 	metadataByKey := make(map[disperser.BlobKey]*disperser.BlobMetadata, 0)
@@ -288,6 +299,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 	}
 
 	stageTimer = time.Now()
+	// 从 blobStore 获取实际的 blob 数据。
 	blobs, err := e.blobStore.GetBlobsByMetadata(ctx, metadatas)
 	if err != nil {
 		return fmt.Errorf("error getting blobs from blob store: %w", err)
@@ -298,7 +310,7 @@ func (e *EncodingStreamer) RequestEncoding(ctx context.Context, encoderChan chan
 
 	for i := range metadatas {
 		metadata := metadatas[i]
-
+		// 对每个 blob 调用 RequestEncodingForBlob 方法，开始编码过程。
 		e.RequestEncodingForBlob(ctx, metadata, blobs[metadata.GetBlobKey()], state, referenceBlockNumber, encoderChan)
 	}
 
@@ -312,30 +324,31 @@ type pendingRequestInfo struct {
 }
 
 func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata *disperser.BlobMetadata, blob *core.Blob, state *core.IndexedOperatorState, referenceBlockNumber uint, encoderChan chan EncodingResultOrStatus) {
-
 	// Validate the encoding parameters for each quorum
-
+	// 获取 blob 的唯一标识符
 	blobKey := metadata.GetBlobKey()
-
+	// 创建一个切片来存储待处理的请求信息
 	pending := make([]pendingRequestInfo, 0, len(metadata.RequestMetadata.SecurityParams))
 
+	// 遍历每个安全参数（quorum）
 	for ind := range metadata.RequestMetadata.SecurityParams {
 
 		quorum := metadata.RequestMetadata.SecurityParams[ind]
 
 		// Check if the blob has already been encoded for this quorum
+		// 检查是否已经请求过该 quorum 的编码
 		if e.EncodedBlobstore.HasEncodingRequested(blobKey, quorum.QuorumID, referenceBlockNumber) {
 			continue
 		}
-
+		// 计算 blob 长度
 		blobLength := encoding.GetBlobLength(metadata.RequestMetadata.BlobSize)
-
+		// 计算块长度
 		chunkLength, err := e.assignmentCoordinator.CalculateChunkLength(state.OperatorState, blobLength, e.StreamerConfig.TargetNumChunks, quorum)
 		if err != nil {
 			e.logger.Error("error calculating chunk length", "err", err)
 			continue
 		}
-
+		// 创建 BlobQuorumInfo 结构
 		blobQuorumInfo := &core.BlobQuorumInfo{
 			SecurityParam: core.SecurityParam{
 				QuorumID:              quorum.QuorumID,
@@ -345,41 +358,44 @@ func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata 
 			},
 			ChunkLength: chunkLength,
 		}
+		// 获取操作员分配
 		assignments, info, err := e.assignmentCoordinator.GetAssignments(state.OperatorState, blobLength, blobQuorumInfo)
 		if err != nil {
 			e.logger.Error("error getting assignments", "err", err)
 			continue
 		}
-
+		// 创建编码参数
 		params := encoding.ParamsFromMins(chunkLength, info.TotalChunks)
-
+		// 验证编码参数
 		err = encoding.ValidateEncodingParams(params, int(blobLength), e.SRSOrder)
 		if err != nil {
 			e.logger.Error("invalid encoding params", "err", err)
 			// Cancel the blob
+			// 标记 blob 为失败状态
 			err := e.blobStore.MarkBlobFailed(ctx, blobKey)
 			if err != nil {
 				e.logger.Error("error marking blob failed", "err", err)
 			}
 			return
 		}
-
+		// 将待处理的请求信息添加到切片中
 		pending = append(pending, pendingRequestInfo{
 			BlobQuorumInfo: blobQuorumInfo,
 			EncodingParams: params,
 			Assignments:    assignments,
 		})
 	}
-
+	// 记录 blob 年龄指标
 	if len(pending) > 0 {
 		requestTime := time.Unix(0, int64(metadata.RequestMetadata.RequestedAt))
 		e.batcherMetrics.ObserveBlobAge("encoding_requested", float64(time.Since(requestTime).Milliseconds()))
 	}
-
+	// 执行编码请求
 	// Execute the encoding requests
 	for ind := range pending {
 		res := pending[ind]
 
+		// 为每个编码请求创建新的上下文
 		// Create a new context for each encoding request
 		// This allows us to cancel all outstanding encoding requests when we create a new batch
 		// This is necessary because an encoding request is dependent on the reference block number
@@ -389,17 +405,18 @@ func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata 
 		e.mu.Lock()
 		e.encodingCtxCancelFuncs = append(e.encodingCtxCancelFuncs, cancel)
 		e.mu.Unlock()
-
+		// 添加路由头信息
 		// Add headers for routing
 		md := grpc_metadata.New(map[string]string{
 			"content-type":   "application/grpc",
 			"x-payload-size": fmt.Sprintf("%d", len(blob.Data)),
 		})
 		encodingCtx = grpc_metadata.NewOutgoingContext(encodingCtx, md)
-
+		// 提交编码任务到工作池
 		e.Pool.Submit(func() {
 			defer cancel()
 			start := time.Now()
+			// 处理编码错误
 			commits, chunks, err := e.encoderClient.EncodeBlob(encodingCtx, blob.Data, res.EncodingParams)
 			if err != nil {
 				encoderChan <- EncodingResultOrStatus{Err: err, EncodingResult: EncodingResult{
@@ -409,7 +426,7 @@ func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata 
 				e.metrics.ObserveEncodingLatency("failed", res.BlobQuorumInfo.QuorumID, len(blob.Data), float64(time.Since(start).Milliseconds()))
 				return
 			}
-
+			// 发送编码结果
 			encoderChan <- EncodingResultOrStatus{
 				EncodingResult: EncodingResult{
 					BlobMetadata:         metadata,
@@ -423,6 +440,7 @@ func (e *EncodingStreamer) RequestEncodingForBlob(ctx context.Context, metadata 
 			}
 			e.metrics.ObserveEncodingLatency("success", res.BlobQuorumInfo.QuorumID, len(blob.Data), float64(time.Since(start).Milliseconds()))
 		})
+		// 标记编码请求已发送
 		e.EncodedBlobstore.PutEncodingRequest(blobKey, res.BlobQuorumInfo.QuorumID)
 	}
 }
@@ -481,14 +499,21 @@ func (e *EncodingStreamer) UpdateReferenceBlock(currentBlockNumber uint) error {
 // If successful, it returns a batch, and updates the reference block number for next batch to use.
 // Otherwise, it returns an error and keeps the blobs in the encoded blob store.
 // This function is meant to be called periodically in a single goroutine as it resets the state of the encoded blob store.
+// CreateBatch 从编码的 blob 存储中的所有 blob 中创建一个批次。
+// 如果成功，它将返回一个批次，并更新下一个批次要使用的引用块号。
+// 否则，它将返回一个错误并将 blob 保留在编码的 blob 存储中。
+// 此函数旨在在单个 goroutine 中定期调用，因为它会重置编码的 blob 存储的状态。
 func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 	// lock to update e.ReferenceBlockNumber
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	// Cancel outstanding encoding requests
 	// Assumption: `CreateBatch` will be called at an interval longer than time it takes to encode a single blob
+	// 取消未完成的编码请求
+	// 假设：`CreateBatch` 的调用间隔将长于编码单个 blob 所需的时间
 	if len(e.encodingCtxCancelFuncs) > 0 {
 		e.logger.Info("canceling outstanding encoding requests", "count", len(e.encodingCtxCancelFuncs))
+		// 取消未完成的编码请求
 		for _, cancel := range e.encodingCtxCancelFuncs {
 			cancel()
 		}
@@ -496,6 +521,7 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 	}
 
 	// If there were no requested blobs between the last batch and now, there is no need to create a new batch
+	// 如果上一个批次和现在之间没有请求的 blob，则无需创建新批次
 	if e.ReferenceBlockNumber == 0 {
 		blockNumber, err := e.chainState.GetCurrentBlockNumber()
 		if err != nil {
@@ -508,6 +534,8 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 
 	// Delete any encoded results that are not from the current batching iteration (i.e. that has different reference block number)
 	// If any pending encoded results are discarded here, it will be re-requested in the next iteration
+	// 删除任何不是来自当前批处理迭代的编码结果（即具有不同的参考块编号）
+	// 如果任何待处理的编码结果在这里被丢弃，它将在下一次迭代中被重新请求
 	encodedResults := e.EncodedBlobstore.GetNewAndDeleteStaleEncodingResults(e.ReferenceBlockNumber)
 
 	// Reset the notifier
@@ -525,11 +553,17 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 	blobHeaderByKey := make(map[disperser.BlobKey]*core.BlobHeader)
 	metadataByKey := make(map[disperser.BlobKey]*disperser.BlobMetadata)
 	for i := range encodedResults {
+		// 处理每个编码结果，填充 encodedBlobByKey, blobQuorums, blobHeaderByKey, metadataByKey
+
 		// each result represent an encoded result per (blob, quorum param)
 		// if the same blob has been dispersed multiple time with different security params,
 		// there will be multiple encoded results for that (blob, quorum)
+		// 每个结果代表每个 (blob, quorum param) 的编码结果
+		// 如果同一个 blob 已使用不同的安全参数多次分散，
+		// 该 (blob, quorum) 将有多个编码结果
 		result := encodedResults[i]
 		blobKey := result.BlobMetadata.GetBlobKey()
+
 		if _, ok := encodedBlobByKey[blobKey]; !ok {
 			metadataByKey[blobKey] = result.BlobMetadata
 			blobQuorums[blobKey] = make([]*core.BlobQuorumInfo, 0)
@@ -564,11 +598,13 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 		encodedBlob.BlobHeader.QuorumInfos = blobQuorums[blobKey]
 	}
 
+	// 验证 blob 的 quorum 信息
 	for blobKey, metadata := range metadataByKey {
 		quorumPresent := make(map[core.QuorumID]bool)
 		for _, quorum := range blobQuorums[blobKey] {
 			quorumPresent[quorum.QuorumID] = true
 		}
+		// 验证 quorum 信息，删除无效的 blob
 		// Check if the blob has valid quorums. If any of the quorums are not valid, delete the blobKey
 		for _, quorum := range metadata.RequestMetadata.SecurityParams {
 			_, ok := quorumPresent[quorum.QuorumID]
@@ -586,10 +622,13 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 	}
 
 	// Transform maps to slices so orders in different slices match
+	// 将映射转换为切片，以便不同切片中的顺序匹配
 	encodedBlobs := make([]core.EncodedBlob, 0, len(metadataByKey))
 	blobHeaders := make([]*core.BlobHeader, 0, len(metadataByKey))
 	metadatas := make([]*disperser.BlobMetadata, 0, len(metadataByKey))
+	// 将有效的 blob 转换为分发状态
 	for key := range metadataByKey {
+		// 处理转换结果
 		err := e.transitionBlobToDispersing(ctx, metadataByKey[key])
 		if err != nil {
 			continue
@@ -601,7 +640,7 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), e.ChainStateTimeout)
 	defer cancel()
-
+	// 获取操作员状态
 	state, err := e.getOperatorState(timeoutCtx, metadatas, e.ReferenceBlockNumber)
 	if err != nil {
 		for _, metadata := range metadatas {
@@ -610,6 +649,7 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 		return nil, err
 	}
 
+	// 创建批次头和 Merkle 树
 	// Populate the batch header
 	batchHeader := &core.BatchHeader{
 		ReferenceBlockNumber: e.ReferenceBlockNumber,
@@ -623,9 +663,9 @@ func (e *EncodingStreamer) CreateBatch(ctx context.Context) (*batch, error) {
 		}
 		return nil, err
 	}
-
+	// 重置引用块号
 	e.ReferenceBlockNumber = 0
-
+	// 返回新创建的批次
 	return &batch{
 		EncodedBlobs: encodedBlobs,
 		BatchHeader:  batchHeader,

@@ -82,6 +82,7 @@ type txnManager struct {
 
 var _ TxnManager = (*txnManager)(nil)
 
+// NewTxnManager 文件实现了一个交易管理器（TxnManager），其主要作用是处理以太坊交易的发送、监控和管理。
 func NewTxnManager(ethClient common.EthClient, wallet walletsdk.Wallet, numConfirmations, queueSize int, txnBroadcastTimeout time.Duration, txnRefreshInterval time.Duration, logger logging.Logger, metrics *TxnManagerMetrics) TxnManager {
 	return &txnManager{
 		ethClient:           ethClient,
@@ -109,6 +110,7 @@ func NewTxnRequest(tx *types.Transaction, tag string, value *big.Int, metadata i
 	}
 }
 
+// Start 实现了 Start 方法，启动一个后台 goroutine 来处理交易请求。
 func (t *txnManager) Start(ctx context.Context) {
 	go func() {
 		for {
@@ -292,6 +294,9 @@ func (t *txnManager) ensureAnyTransactionEvaled(ctx context.Context, txs []*tran
 // monitorTransaction waits until the transaction is confirmed (or failed) and resends it with a higher gas price if it is not mined without a timeout.
 // It returns the receipt once the transaction has been confirmed.
 // It returns an error if the transaction fails to be sent for reasons other than timeouts.
+// monitorTransaction 等待交易确认（或失败），如果未在超时时间内完成开采，则以更高的 gas 价格重新发送交易。
+// 交易确认后，返回收据。
+// 如果交易因超时以外的原因而发送失败，则返回错误。
 func (t *txnManager) monitorTransaction(ctx context.Context, req *TxnRequest) (*types.Receipt, error) {
 	numSpeedUps := 0
 	retryFromFailure := 0
@@ -391,6 +396,7 @@ func (t *txnManager) monitorTransaction(ctx context.Context, req *TxnRequest) (*
 
 // speedUpTxn increases the gas price of the existing transaction by specified percentage.
 // It makes sure the new gas price is not lower than the current gas price.
+// 实现了交易加速（speedUpTxn）功能，当交易长时间未被确认时，会通过提高 gas 价格来加速交易。
 func (t *txnManager) speedUpTxn(ctx context.Context, tx *types.Transaction, tag string) (*types.Transaction, error) {
 	prevGasTipCap := tx.GasTipCap()
 	prevGasFeeCap := tx.GasFeeCap()

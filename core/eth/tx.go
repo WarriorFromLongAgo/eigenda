@@ -67,6 +67,7 @@ type BN254G2Point struct {
 	Y [2]*big.Int
 }
 
+// NewTransactor 定义了 Transactor 结构体，用于管理与以太坊合约的交互。
 func NewTransactor(
 	logger logging.Logger,
 	client common.EthClient,
@@ -108,6 +109,7 @@ func (t *Transactor) GetRegisteredQuorumIdsForOperator(ctx context.Context, oper
 	return quorumIds, nil
 }
 
+// getRegistrationParams 获取注册参数
 func (t *Transactor) getRegistrationParams(
 	ctx context.Context,
 	keypair *core.KeyPair,
@@ -179,6 +181,8 @@ func (t *Transactor) getRegistrationParams(
 // RegisterOperator registers a new operator with the given public key and socket with the provided quorum ids.
 // If the operator is already registered with a given quorum id, the transaction will fail (noop) and an error
 // will be returned.
+// RegisterOperator 使用给定的公钥和套接字以及提供的仲裁 ID 注册一个新的操作员。
+// 如果操作员已经使用给定的仲裁 ID 注册，则交易将失败（noop）并返回错误
 func (t *Transactor) RegisterOperator(
 	ctx context.Context,
 	keypair *core.KeyPair,
@@ -219,6 +223,8 @@ func (t *Transactor) RegisterOperator(
 
 // RegisterOperatorWithChurn registers a new operator with the given public key and socket with the provided quorum ids
 // with the provided signature from the churner
+// RegisterOperatorWithChurn 使用给定的公钥和套接字以及提供的仲裁 ID 注册一个新的操作员
+// 使用来自 churner 的签名
 func (t *Transactor) RegisterOperatorWithChurn(
 	ctx context.Context,
 	keypair *core.KeyPair,
@@ -292,6 +298,9 @@ func (t *Transactor) RegisterOperatorWithChurn(
 // with the current block number.
 // If the operator isn't registered with any of the specified quorums, this function will return error, and
 // no quorum will be deregistered.
+// DeregisterOperator 使用给定的公钥从指定的仲裁中注销操作员，该仲裁在提供的块号处注册。要完全注销操作员，应使用当前块号调用此函数。
+// 如果操作员未在任何指定的仲裁中注册，则此函数将返回错误，并且
+// 不会注销任何仲裁。
 func (t *Transactor) DeregisterOperator(ctx context.Context, pubkeyG1 *core.G1Point, blockNumber uint32, quorumIds []core.QuorumID) error {
 	if len(quorumIds) == 0 {
 		return errors.New("no quorum is specified to deregister from")
@@ -381,6 +390,9 @@ func (t *Transactor) BuildEjectOperatorsTxn(ctx context.Context, operatorsByQuor
 // GetOperatorStakes returns the stakes of all operators within the quorums that the operator represented by operatorId
 // is registered with. The returned stakes are for the block number supplied. The indices of the operators within each quorum
 // are also returned.
+// GetOperatorStakes 返回由 operatorId
+// 代表的操作员注册的仲裁团内所有操作员的股份。返回的股份是针对提供的区块编号的。每个仲裁团内操作员的索引
+// 也会返回。
 func (t *Transactor) GetOperatorStakes(ctx context.Context, operator core.OperatorID, blockNumber uint32) (core.OperatorStakes, []core.QuorumID, error) {
 	quorumBitmap, state_, err := t.Bindings.OpStateRetriever.GetOperatorState0(&bind.CallOpts{
 		Context: ctx,
@@ -433,6 +445,8 @@ func (t *Transactor) GetStoreDurationBlocks(ctx context.Context) (uint32, error)
 
 // GetOperatorStakesForQuorums returns the stakes of all operators within the supplied quorums. The returned stakes are for the block number supplied.
 // The indices of the operators within each quorum are also returned.
+// GetOperatorStakesForQuorums 返回所提供仲裁团内所有操作员的股份。返回的股份是针对所提供的区块编号的。
+// 还返回每个仲裁团内操作员的索引。
 func (t *Transactor) GetOperatorStakesForQuorums(ctx context.Context, quorums []core.QuorumID, blockNumber uint32) (core.OperatorStakes, error) {
 	quorumBytes := make([]byte, len(quorums))
 	for ind, quorum := range quorums {
@@ -469,6 +483,7 @@ func (t *Transactor) GetOperatorStakesForQuorums(ctx context.Context, quorums []
 // Note that this function returns a transaction without publishing it to the blockchain. The caller is responsible for publishing the transaction.
 // 构建确认批次的交易，包括准备批次头、聚合签名等数据
 func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core.BatchHeader, quorums map[core.QuorumID]*core.QuorumResult, signatureAggregation *core.SignatureAggregation) (*types.Transaction, error) {
+	// 准备确认批次所需的数据
 	quorumNumbers := quorumParamsToQuorumNumbers(quorums)
 	nonSignerOperatorIds := make([][32]byte, len(signatureAggregation.NonSigners))
 	for i := range signatureAggregation.NonSigners {
@@ -490,12 +505,13 @@ func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core
 		return nil, err
 	}
 
+	// 获取签名检查所需的索引信息：
 	nonSignerPubkeys := make([]eigendasrvmg.BN254G1Point, len(signatureAggregation.NonSigners))
 	for i := range signatureAggregation.NonSigners {
 		signature := signatureAggregation.NonSigners[i]
 		nonSignerPubkeys[i] = pubKeyG1ToBN254G1Point(signature)
 	}
-
+	// 准备批次头信息：
 	signedStakeForQuorums := serializeSignedStakeForQuorums(quorums)
 	batchH := eigendasrvmg.IEigenDAServiceManagerBatchHeader{
 		BlobHeadersRoot:       batchHeader.BatchRoot,
@@ -504,7 +520,7 @@ func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core
 		ReferenceBlockNumber:  uint32(batchHeader.ReferenceBlockNumber),
 	}
 	t.Logger.Debug("batch header", "batchHeaderReferenceBlock", batchH.ReferenceBlockNumber, "batchHeaderRoot", gethcommon.Bytes2Hex(batchH.BlobHeadersRoot[:]), "quorumNumbers", gethcommon.Bytes2Hex(batchH.QuorumNumbers), "quorumThresholdPercentages", gethcommon.Bytes2Hex(batchH.SignedStakeForQuorums))
-
+	// 转换聚合签名和公钥为合约所需的格式：
 	sigma := signatureToBN254G1Point(signatureAggregation.AggSignature)
 
 	apkG2 := pubKeyG2ToBN254G2Point(signatureAggregation.AggPubKey)
@@ -513,7 +529,7 @@ func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core
 	for i := range signatureAggregation.QuorumAggPubKeys {
 		quorumApks[i] = pubKeyG1ToBN254G1Point(signatureAggregation.QuorumAggPubKeys[i])
 	}
-
+	// 构建签名检查器对象：
 	signatureChecker := eigendasrvmg.IBLSSignatureCheckerNonSignerStakesAndSignature{
 		NonSignerQuorumBitmapIndices: checkSignaturesIndices.NonSignerQuorumBitmapIndices,
 		NonSignerPubkeys:             nonSignerPubkeys,
@@ -528,12 +544,13 @@ func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core
 	if err == nil {
 		t.Logger.Debug("signature checker", "signatureChecker", string(sigChecker))
 	}
-
+	// 获取交易选项：
 	opts, err := t.EthClient.GetNoSendTransactOpts()
 	if err != nil {
 		t.Logger.Error("Failed to generate transact opts", "err", err)
 		return nil, err
 	}
+	// 调用智能合约的 ConfirmBatch 方法，构建确认批次的交易：
 	return t.Bindings.EigenDAServiceManager.ConfirmBatch(opts, batchH, signatureChecker)
 }
 
@@ -776,6 +793,7 @@ func (t *Transactor) GetOnDemandPayments(ctx context.Context, blockNumber uint32
 	return map[string]core.OnDemandPayment{}, nil
 }
 
+// updateContractBindings 实现了与各种 EigenDA 相关合约（如 RegistryCoordinator、BLSApkRegistry、EigenDAServiceManager 等）的绑定。
 func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigenDAServiceManagerAddr gethcommon.Address) error {
 
 	contractEigenDAServiceManager, err := eigendasrvmg.NewContractEigenDAServiceManager(eigenDAServiceManagerAddr, t.EthClient)

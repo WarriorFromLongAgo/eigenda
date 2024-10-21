@@ -102,7 +102,7 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 	referenceBlockNumber uint,
 	batchRoot [32]byte,
 	quorumID core.QuorumID) (*BlobChunks, error) {
-
+	// 1. 获取索引化的操作员状态
 	indexedOperatorState, err := r.indexedChainState.GetIndexedOperatorState(ctx, referenceBlockNumber, []core.QuorumID{quorumID})
 	if err != nil {
 		return nil, err
@@ -113,23 +113,26 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 	}
 
 	// Get blob header from any operator
+	// 2. 从任意操作员获取数据块头（blob header）和证明
 	var blobHeader *core.BlobHeader
 	var proof *merkletree.Proof
 	var proofVerified bool
 	for opID := range operators {
 		opInfo := indexedOperatorState.IndexedOperators[opID]
+		// 从每一个操作员获取 blob 头和证明：
 		blobHeader, proof, err = r.nodeClient.GetBlobHeader(ctx, opInfo.Socket, batchHeaderHash, blobIndex)
 		if err != nil {
 			// try another operator
 			r.logger.Warn("failed to dial operator while fetching BlobHeader, trying different operator", "operator", opInfo.Socket, "err", err)
 			continue
 		}
-
+		// 3. 验证数据块头和证明
 		blobHeaderHash, err := blobHeader.GetBlobHeaderHash()
 		if err != nil {
 			r.logger.Warn("got invalid blob header, trying different operator", "operator", opInfo.Socket, "err", err)
 			continue
 		}
+		// 验证 blob 头和证明：
 		proofVerified, err = merkletree.VerifyProofUsing(blobHeaderHash[:], false, proof, [][]byte{batchRoot[:]}, keccak256.New())
 		if err != nil {
 			r.logger.Warn("got invalid blob header proof, trying different operator", "operator", opInfo.Socket, "err", err)
@@ -145,7 +148,8 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 	if blobHeader == nil || proof == nil || !proofVerified {
 		return nil, fmt.Errorf("failed to get blob header from all operators (header hash: %s, index: %d)", batchHeaderHash, blobIndex)
 	}
-
+	// 4. 获取特定法定人数（quorum）的头信息
+	// 获取特定仲裁组的头信息：
 	var quorumHeader *core.BlobQuorumInfo
 	for _, header := range blobHeader.QuorumInfos {
 		if header.QuorumID == quorumID {
@@ -159,30 +163,37 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 	}
 
 	// Validate the blob length
+	// 5. 验证数据块长度
+	// 验证 blob 长度和承诺：
 	err = r.verifier.VerifyBlobLength(blobHeader.BlobCommitments)
 	if err != nil {
 		return nil, err
 	}
 
 	// Validate the commitments are equivalent
+	// 6. 验证承诺（commitments）是否等价
+	// 验证 blob 长度是否符合预期
 	commitmentBatch := []encoding.BlobCommitments{blobHeader.BlobCommitments}
 	err = r.verifier.VerifyCommitEquivalenceBatch(commitmentBatch)
 	if err != nil {
 		return nil, err
 	}
-
+	// 7. 获取分配信息
+	// 获取分配信息：
 	assignments, info, err := r.assignmentCoordinator.GetAssignments(indexedOperatorState.OperatorState, blobHeader.Length, quorumHeader)
 	if err != nil {
 		return nil, errors.New("failed to get assignments")
 	}
 
 	// Fetch chunks from all operators
+	// 8. 并行地从多个操作员获取数据块分片
 	chunksChan := make(chan RetrievedChunks, len(operators))
 	pool := workerpool.New(r.numConnections)
 	for opID := range operators {
 		opID := opID
 		opInfo := indexedOperatorState.IndexedOperators[opID]
 		pool.Submit(func() {
+			// 并行从多个操作员获取数据块分片：
 			r.nodeClient.GetChunks(ctx, opID, opInfo, batchHeaderHash, blobIndex, quorumID, chunksChan)
 		})
 	}
@@ -192,6 +203,7 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 	var chunks []*encoding.Frame
 	var indices []encoding.ChunkNumber
 	// TODO(ian-shim): if we gathered enough chunks, cancel remaining RPC calls
+	// 9. 收集和验证从操作员获取的分片
 	for i := 0; i < len(operators); i++ {
 		reply := <-chunksChan
 		if reply.Err != nil {
@@ -202,7 +214,7 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 		if !ok {
 			return nil, fmt.Errorf("no assignment to operator %s", reply.OperatorID.Hex())
 		}
-
+		// 10. 验证从每个操作员获取的分片
 		err = r.verifier.VerifyFrames(reply.Chunks, assignment.GetIndices(), blobHeader.BlobCommitments, encodingParams)
 		if err != nil {
 			r.logger.Error("failed to verify chunks from operator", "operator", reply.OperatorID.Hex(), "err", err)
@@ -214,7 +226,7 @@ func (r *retrievalClient) RetrieveBlobChunks(ctx context.Context,
 		chunks = append(chunks, reply.Chunks...)
 		indices = append(indices, assignment.GetIndices()...)
 	}
-
+	// 11. 返回包含所有验证通过的分片和相关信息的 BlobChunks 结构
 	return &BlobChunks{
 		Chunks:           chunks,
 		Indices:          indices,

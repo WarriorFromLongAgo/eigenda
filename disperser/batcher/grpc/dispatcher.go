@@ -50,14 +50,20 @@ func (c *dispatcher) DisperseBatch(ctx context.Context, state *core.IndexedOpera
 }
 
 func (c *dispatcher) sendAllChunks(ctx context.Context, state *core.IndexedOperatorState, blobs []core.EncodedBlob, batchHeader *core.BatchHeader, update chan core.SigningMessage) {
+	// 遍历所有的索引操作员（IndexedOperators）
 	for id, op := range state.IndexedOperators {
+		// 对每个操作员，启动一个新的 goroutine 来处理发送过程，这样可以并行处理多个操作员。
 		go func(op core.IndexedOperatorInfo, id core.OperatorID) {
+			// 创建一个 blobMessages 切片，用于存储该操作员需要处理的编码 blob 消息。
 			blobMessages := make([]*core.EncodedBlobMessage, 0)
+			// 检查该操作员是否参与了任何 quorum（通过 hasAnyBundles 标志）。
 			hasAnyBundles := false
+			// 获取批次头的哈希值。
 			batchHeaderHash, err := batchHeader.GetBatchHeaderHash()
 			if err != nil {
 				return
 			}
+			// 遍历所有的 blob，为每个 blob 创建一个 EncodedBlobMessage，并添加到 blobMessages 中。
 			for _, blob := range blobs {
 				if _, ok := blob.EncodedBundlesByOperator[id]; ok {
 					hasAnyBundles = true
@@ -68,6 +74,7 @@ func (c *dispatcher) sendAllChunks(ctx context.Context, state *core.IndexedOpera
 					EncodedBundles: blob.EncodedBundlesByOperator[id],
 				})
 			}
+			// 如果操作员没有参与任何 quorum，则发送一个错误消息到 update 通道，并结束该 goroutine。
 			if !hasAnyBundles {
 				// Operator is not part of any quorum, no need to send chunks
 				update <- core.SigningMessage{
@@ -79,7 +86,7 @@ func (c *dispatcher) sendAllChunks(ctx context.Context, state *core.IndexedOpera
 				}
 				return
 			}
-
+			// 如果操作员参与了至少一个 quorum，则调用 sendChunks 方法向该操作员发送编码的 blob 数据。
 			requestedAt := time.Now()
 			sig, err := c.sendChunks(ctx, blobMessages, batchHeader, &op)
 			latencyMs := float64(time.Since(requestedAt).Milliseconds())
@@ -93,6 +100,7 @@ func (c *dispatcher) sendAllChunks(ctx context.Context, state *core.IndexedOpera
 				}
 				c.metrics.ObserveLatency(id.Hex(), false, latencyMs)
 			} else {
+				// 根据 sendChunks 的结果，创建一个 SigningMessage 并发送到 update 通道。这个消息包含了操作员的签名（如果成功）或错误信息（如果失败）。
 				update <- core.SigningMessage{
 					Signature:            sig,
 					Operator:             id,
@@ -113,38 +121,48 @@ func (c *dispatcher) sendAllChunks(ctx context.Context, state *core.IndexedOpera
 
 func (c *dispatcher) sendChunks(ctx context.Context, blobs []*core.EncodedBlobMessage, batchHeader *core.BatchHeader, op *core.IndexedOperatorInfo) (*core.Signature, error) {
 	// TODO Add secure Grpc
+	// TODO: 未来需要添加安全的 gRPC 连接
 
+	// 建立与操作员的 gRPC 连接。
 	conn, err := grpc.Dial(
 		core.OperatorSocket(op.Socket).GetDispersalSocket(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
+		// 如果连接失败，记录警告并返回错误
 		c.logger.Warn("Disperser cannot connect to operator dispersal socket", "dispersal_socket", core.OperatorSocket(op.Socket).GetDispersalSocket(), "err", err)
 		return nil, err
 	}
 	defer conn.Close()
-
+	// 创建 DispersalClient
 	gc := node.NewDispersalClient(conn)
+	// 设置带有超时的上下文
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	start := time.Now()
+	// 准备 StoreChunks 请求
 	request, totalSize, err := GetStoreChunksRequest(blobs, batchHeader, c.EnableGnarkBundleEncoding)
 	if err != nil {
 		return nil, err
 	}
+	// 记录发送请求的详细信息
 	c.logger.Debug("sending chunks to operator", "operator", op.Socket, "num blobs", len(blobs), "size", totalSize, "request message size", proto.Size(request), "request serialization time", time.Since(start), "use Gnark chunk encoding", c.EnableGnarkBundleEncoding)
+	// 设置最大调用发送消息大小为 60GB
 	opt := grpc.MaxCallSendMsgSize(60 * 1024 * 1024 * 1024)
+	// 调用 StoreChunks 方法发送请求
 	reply, err := gc.StoreChunks(ctx, request, opt)
 
 	if err != nil {
 		return nil, err
 	}
-
+	// 从响应中获取签名字节
 	sigBytes := reply.GetSignature()
+	// 反序列化签名
 	point, err := new(core.Signature).Deserialize(sigBytes)
 	if err != nil {
 		return nil, err
 	}
+	// 创建并返回签名对象
 	sig := &core.Signature{G1Point: point}
 	return sig, nil
 }

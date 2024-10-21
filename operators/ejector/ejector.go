@@ -99,12 +99,15 @@ func NewEjector(wallet walletsdk.Wallet, ethClient common.EthClient, logger logg
 	}
 }
 
+// Eject 执行操作员驱逐过程
 func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric, mode Mode) (*EjectionResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// 筛选需要驱逐的操作员
 	nonsigners := make([]*NonSignerMetric, 0)
 	for _, metric := range nonsignerMetrics {
+		// 根据未签名率阈值和SLA违规情况筛选操作员
 		// If nonsigningRateThreshold is set and valid, we will only eject operators with
 		// nonsigning rate >= nonsigningRateThreshold.
 		if e.nonsigningRateThreshold >= 10 && e.nonsigningRateThreshold <= 100 && metric.Percentage < float64(e.nonsigningRateThreshold) {
@@ -119,7 +122,9 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 	// Rank the operators for each quorum by the operator performance score.
 	// The operators with lower perf score will get ejected with priority in case of
 	// rate limiting.
+	// 对每个quorum中的操作员按性能得分排序
 	sort.Slice(nonsigners, func(i, j int) bool {
+		// 排序逻辑
 		if nonsigners[i].QuorumId == nonsigners[j].QuorumId {
 			if computePerfScore(nonsigners[i]) == computePerfScore(nonsigners[j]) {
 				return float64(nonsigners[i].TotalUnsignedBatches)*nonsigners[i].StakePercentage > float64(nonsigners[j].TotalUnsignedBatches)*nonsigners[j].StakePercentage
@@ -129,12 +134,14 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 		return nonsigners[i].QuorumId < nonsigners[j].QuorumId
 	})
 
+	// 转换操作员数据格式
 	operatorsByQuorum, err := e.convertOperators(nonsigners)
 	if err != nil {
 		e.metrics.IncrementEjectionRequest(mode, codes.Internal)
 		return nil, err
 	}
 
+	// 构建驱逐交易
 	txn, err := e.transactor.BuildEjectOperatorsTxn(ctx, operatorsByQuorum)
 	if err != nil {
 		e.metrics.IncrementEjectionRequest(mode, codes.Internal)
@@ -142,6 +149,7 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 		return nil, err
 	}
 
+	// 发送交易
 	var txID walletsdk.TxID
 	retryFromFailure := 0
 	for retryFromFailure < maxSendTransactionRetry {
@@ -150,13 +158,15 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 			e.metrics.IncrementEjectionRequest(mode, codes.Internal)
 			return nil, fmt.Errorf("failed to get latest gas caps: %w", err)
 		}
-
+		// 更新gas价格并发送交易
 		txn, err = e.ethClient.UpdateGas(ctx, txn, big.NewInt(0), gasTipCap, gasFeeCap)
 		if err != nil {
 			e.metrics.IncrementEjectionRequest(mode, codes.Internal)
 			return nil, fmt.Errorf("failed to update gas price: %w", err)
 		}
 		txID, err = e.wallet.SendTransaction(ctx, txn)
+
+		// 处理超时和其他错误
 		var urlErr *url.Error
 		didTimeout := false
 		if errors.As(err, &urlErr) {
@@ -175,17 +185,20 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 		}
 	}
 
+	// 等待交易被确认
 	queryTicker := time.NewTicker(queryTickerDuration)
 	defer queryTicker.Stop()
 	ctxWithTimeout, cancelCtx := context.WithTimeout(ctx, e.txnTimeout)
 	defer cancelCtx()
 	var receipt *types.Receipt
 	for {
+		// 获取交易收据
 		receipt, err = e.wallet.GetTransactionReceipt(ctxWithTimeout, txID)
 		if err == nil {
 			break
 		}
 
+		// 处理各种错误情况
 		if errors.Is(err, ethereum.NotFound) || errors.Is(err, walletsdk.ErrReceiptNotYetAvailable) {
 			e.logger.Debug("Transaction not yet mined", "txID", txID, "txHash", txn.Hash().Hex(), "err", err)
 		} else if errors.Is(err, walletsdk.ErrNotYetBroadcasted) {
@@ -200,6 +213,7 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 			return nil, err
 		}
 
+		// 如果成功获取收据，跳出循环
 		// Wait for the next round.
 		select {
 		case <-ctxWithTimeout.Done():
@@ -208,12 +222,13 @@ func (e *Ejector) Eject(ctx context.Context, nonsignerMetrics []*NonSignerMetric
 		case <-queryTicker.C:
 		}
 	}
-
+	// 记录交易成功信息
 	e.logger.Info("Ejection transaction succeeded", "receipt", receipt)
-
+	// 更新指标
 	e.metrics.UpdateEjectionGasUsed(receipt.GasUsed)
 
 	// TODO: get the txn response and update the metrics.
+	// 构建并返回驱逐响应
 	ejectionResponse := &EjectionResponse{
 		TransactionHash: receipt.TxHash.Hex(),
 	}

@@ -105,24 +105,27 @@ var _ SignatureAggregator = (*StdSignatureAggregator)(nil)
 // 聚合这些签名，生成一个仲裁证明（quorum attestation）。
 // 这个方法是批处理过程中的关键步骤，它确保了足够数量的操作员已经正确接收并签名了批次数据。
 func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *IndexedOperatorState, message [32]byte, messageChan chan SigningMessage) (*QuorumAttestation, error) {
+	// 获取所有仲裁组ID并排序
+	// 其中键是 QuorumID，值是该仲裁组中的操作员集合。
 	quorumIDs := make([]QuorumID, 0, len(state.AggKeys))
 	for quorumID := range state.Operators {
 		quorumIDs = append(quorumIDs, quorumID)
 	}
 	slices.Sort(quorumIDs)
-
+	// 检查仲裁组数量是否大于零
 	if len(quorumIDs) == 0 {
 		return nil, errors.New("the number of quorums must be greater than zero")
 	}
 
 	// Ensure all quorums are found in state
+	// 确保所有仲裁组都在状态中
 	for _, id := range quorumIDs {
 		_, found := state.Operators[id]
 		if !found {
 			return nil, errors.New("quorum not found")
 		}
 	}
-
+	// 初始化各种数据结构
 	stakeSigned := make(map[QuorumID]*big.Int, len(quorumIDs))
 	for _, quorumID := range quorumIDs {
 		stakeSigned[quorumID] = big.NewInt(0)
@@ -132,11 +135,14 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 	signerMap := make(map[OperatorID]bool)
 
 	// Aggregate Signatures
+	// 从消息通道接收签名消息
 	numOperators := len(state.IndexedOperators)
 
 	// 从 update channel 读取 SigningMessage。
+	// 从消息通道接收签名消息
 	for numReply := 0; numReply < numOperators; numReply++ {
 		var err error
+		// 获取操作员地址
 		r := <-messageChan
 		operatorIDHex := r.Operator.Hex()
 		operatorAddr, ok := a.OperatorAddresses.Get(r.Operator)
@@ -157,11 +163,12 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			socket = op.Socket
 		}
 		batchHeaderHashHex := hex.EncodeToString(r.BatchHeaderHash[:])
+		// 处理签名错误
 		if r.Err != nil {
 			a.Logger.Warn("error returned from messageChan", "operatorID", operatorIDHex, "operatorAddress", operatorAddr, "socket", socket, "batchHeaderHash", batchHeaderHashHex, "attestationLatencyMs", r.AttestationLatencyMs, "err", r.Err)
 			continue
 		}
-
+		// 验证操作员是否存在于状态中
 		op, found := state.IndexedOperators[r.Operator]
 		if !found {
 			a.Logger.Error("Operator not found in state", "operatorID", operatorIDHex, "operatorAddress", operatorAddr, "socket", socket)
@@ -178,6 +185,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 		}
 
 		// 统计每个仲裁组（quorum）中的有效签名数量。
+		// 处理每个仲裁组的签名
 		operatorQuorums := make([]uint8, 0, len(quorumIDs))
 		for _, quorumID := range quorumIDs {
 			// Get stake amounts for operator
@@ -195,6 +203,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			stakeSigned[quorumID].Add(stakeSigned[quorumID], opInfo.Stake)
 
 			// Add to agg signature
+			// 聚合签名和公钥
 			if aggSigs[quorumID] == nil {
 				aggSigs[quorumID] = &Signature{sig.Clone()}
 				aggPubKeys[quorumID] = op.PubkeyG2.Clone()
@@ -207,6 +216,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 	}
 
 	// Aggregate Non signer Pubkey Id
+	// 处理未签名的操作员
 	nonSignerKeys := make([]*G1Point, 0)
 	nonSignerOperatorIds := make([]OperatorID, 0)
 
@@ -217,7 +227,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			nonSignerOperatorIds = append(nonSignerOperatorIds, id)
 		}
 	}
-
+	// 验证每个仲裁组的签名和公钥
 	quorumAggPubKeys := make(map[QuorumID]*G1Point, len(quorumIDs))
 
 	// Validate the amount signed and aggregate signatures for each quorum
@@ -235,7 +245,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			a.Logger.Warn("no stake signed for quorum", "quorumID", quorumID)
 			continue
 		}
-
+		// 验证聚合公钥
 		// Verify that the aggregated public key for the quorum matches the on-chain quorum aggregate public key sans non-signers of the quorum
 		quorumAggKey := state.AggKeys[quorumID]
 		quorumAggPubKeys[quorumID] = quorumAggKey
@@ -259,7 +269,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 		if !ok {
 			return nil, ErrPubKeysNotEqual
 		}
-
+		// 验证聚合签名
 		// Verify the aggregated signature for the quorum
 		ok = aggSigs[quorumID].Verify(aggPubKeys[quorumID], message)
 		if !ok {
@@ -268,6 +278,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 	}
 
 	// 生成一个 quorumAttestation 对象，包含了各个仲裁组的签名状态。
+	// 返回仲裁证明
 	return &QuorumAttestation{
 		QuorumAggPubKey:  quorumAggPubKeys,
 		SignersAggPubKey: aggPubKeys,
@@ -277,8 +288,12 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 	}, nil
 }
 
+// AggregateSignatures 进一步聚合来自多个仲裁组的签名。
+// 生成一个包含所有仲裁组聚合签名的 SignatureAggregation 对象。
+// 处理未签名的操作员信息。
 func (a *StdSignatureAggregator) AggregateSignatures(ctx context.Context, ics IndexedChainState, referenceBlockNumber uint, quorumAttestation *QuorumAttestation, quorumIDs []QuorumID) (*SignatureAggregation, error) {
 	// Aggregate the aggregated signatures. We reuse the first aggregated signature as the accumulator
+	// 聚合多个仲裁组的签名
 	var aggSig *Signature
 	for _, quorumID := range quorumIDs {
 		sig := quorumAttestation.AggSignature[quorumID]
@@ -290,6 +305,7 @@ func (a *StdSignatureAggregator) AggregateSignatures(ctx context.Context, ics In
 	}
 
 	// Aggregate the aggregated public keys. We reuse the first aggregated public key as the accumulator
+	// 聚合多个仲裁组的公钥
 	var aggPubKey *G2Point
 	for _, quorumID := range quorumIDs {
 		apk := quorumAttestation.SignersAggPubKey[quorumID]
@@ -299,7 +315,7 @@ func (a *StdSignatureAggregator) AggregateSignatures(ctx context.Context, ics In
 			aggPubKey.Add(apk)
 		}
 	}
-
+	// 处理未签名的操作员
 	nonSignerKeys := make([]*G1Point, 0)
 	indexedOperatorState, err := ics.GetIndexedOperatorState(ctx, referenceBlockNumber, quorumIDs)
 	if err != nil {
@@ -314,13 +330,14 @@ func (a *StdSignatureAggregator) AggregateSignatures(ctx context.Context, ics In
 
 	// sort non signer keys according to how it's checked onchain
 	// ref: https://github.com/Layr-Labs/eigenlayer-middleware/blob/m2-mainnet/src/BLSSignatureChecker.sol#L99
+	// 对未签名操作员的公钥进行排序
 	sort.Slice(nonSignerKeys, func(i, j int) bool {
 		hash1 := nonSignerKeys[i].Hash()
 		hash2 := nonSignerKeys[j].Hash()
 		// sort in accending order
 		return bytes.Compare(hash1[:], hash2[:]) == -1
 	})
-
+	// 收集每个仲裁组的聚合公钥和结果
 	quorumAggKeys := make(map[QuorumID]*G1Point, len(quorumIDs))
 	for _, quorumID := range quorumIDs {
 		quorumAggKeys[quorumID] = quorumAttestation.QuorumAggPubKey[quorumID]
@@ -330,7 +347,8 @@ func (a *StdSignatureAggregator) AggregateSignatures(ctx context.Context, ics In
 	for _, quorumID := range quorumIDs {
 		quorumResults[quorumID] = quorumAttestation.QuorumResults[quorumID]
 	}
-
+	// 创建并返回一个 SignatureAggregation 对象
+	// 包含了未签名者的公钥、每个仲裁组的聚合公钥、总的聚合公钥和签名，以及每个仲裁组的结果。
 	return &SignatureAggregation{
 		NonSigners:       nonSignerKeys,
 		QuorumAggPubKeys: quorumAggKeys,

@@ -244,6 +244,7 @@ func (s *SharedBlobStore) GetBlobMetadataByStatus(ctx context.Context, blobStatu
 	return s.blobMetadataStore.GetBlobMetadataByStatus(ctx, blobStatus)
 }
 
+// GetBlobMetadataByStatusWithPagination 主要用于分页获取特定状态（在这里是 disperser.Confirmed）的 blob 元数据。
 func (s *SharedBlobStore) GetBlobMetadataByStatusWithPagination(ctx context.Context, blobStatus disperser.BlobStatus, limit int32, exclusiveStartKey *disperser.BlobStoreExclusiveStartKey) ([]*disperser.BlobMetadata, *disperser.BlobStoreExclusiveStartKey, error) {
 	return s.blobMetadataStore.GetBlobMetadataByStatusWithPagination(ctx, blobStatus, limit, exclusiveStartKey)
 }

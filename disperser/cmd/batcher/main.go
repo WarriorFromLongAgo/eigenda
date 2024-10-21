@@ -200,11 +200,18 @@ func RunBatcher(ctx *cli.Context) error {
 		return err
 	}
 	// 从合约中，获取一个称为 "BLOCK_STALE_MEASURE" 的参数。这个参数可能用于确定区块在什么时候被认为是"过时"的。在分布式系统中，这种测量通常用于处理网络延迟和临时分叉的情况。
+	// 定义有效质押时间窗口：它定义了系统在过去多少个区块内认为质押金额仍然有效。这对于处理网络延迟和临时分叉非常重要。
+	// 操作员退出缓冲：它为操作员提供了一个缓冲期，在取消注册后仍需要继续服务一段时间。这个时间就是 BLOCK_STALE_MEASURE 定义的区块数。
+	// 批次确认验证：在确认批次时，系统会检查批次的参考区块号是否在 BLOCK_STALE_MEASURE 定义的范围内。这确保了不会确认使用过时质押的批次。
+	// 适应分散器延迟：它需要考虑分散器引入的两种延迟：FinalizationBlockDelay 和 BatchInterval。
+	// 防止过时数据：它有助于防止使用过时的操作员状态或质押信息。
 	blockStaleMeasure, err := tx.GetBlockStaleMeasure(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get BLOCK_STALE_MEASURE: %w", err)
 	}
 	// 从合约中，获取一个称为 "STORE_DURATION_BLOCKS" 的参数。这个参数可能表示数据应该被存储的区块数量。在 EigenDA 系统中，这可能用于确定数据应该被保留多长时间。
+	// 这个常量定义了数据应该被存储的区块数量。它的作用是确定数据在系统中应该被保留多长时间。
+	// 目前是14天
 	storeDurationBlocks, err := tx.GetStoreDurationBlocks(context.Background())
 	if err != nil || storeDurationBlocks == 0 {
 		return fmt.Errorf("failed to get STORE_DURATION_BLOCKS: %w", err)

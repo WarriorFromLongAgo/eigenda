@@ -54,13 +54,16 @@ func (s *Server) Start(metricsConfig MetricsConfig) error {
 	return nil
 }
 
+// Churn 处理操作员的轮换请求
 func (s *Server) Churn(ctx context.Context, req *pb.ChurnRequest) (*pb.ChurnReply, error) {
+	// 验证轮换请求的有效性
 	err := s.validateChurnRequest(ctx, req)
 	if err != nil {
 		s.metrics.IncrementFailedRequestNum("Churn", FailReasonInvalidRequest)
 		return nil, api.NewInvalidArgError(fmt.Sprintf("invalid request: %s", err.Error()))
 	}
 
+	// 开始计时，用于测量处理时间
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(f float64) {
 		s.metrics.ObserveLatency("Churn", f*1000) // make milliseconds
 	}))
@@ -69,17 +72,18 @@ func (s *Server) Churn(ctx context.Context, req *pb.ChurnRequest) (*pb.ChurnRepl
 
 	now := time.Now()
 	// Global rate limiting: check that we are after the previous approval's expiry
+	// 全局速率限制：检查是否在上一个批准的过期时间之后
 	if now.Unix() < s.latestExpiry {
 		s.metrics.IncrementFailedRequestNum("Churn", FailReasonPrevApprovalNotExpired)
 		return nil, api.NewResourceExhaustedError(fmt.Sprintf("previous approval not expired, retry in %d seconds", s.latestExpiry-now.Unix()))
 	}
-
+	// 创建轮换请求对象
 	request, err := createChurnRequest(req)
 	if err != nil {
 		s.metrics.IncrementFailedRequestNum("Churn", FailReasonInvalidRequest)
 		return nil, api.NewInvalidArgError(err.Error())
 	}
-
+	// 验证请求签名
 	operatorToRegisterAddress, err := s.churner.VerifyRequestSignature(ctx, request)
 	if err != nil {
 		s.metrics.IncrementFailedRequestNum("Churn", FailReasonInvalidSignature)
@@ -87,12 +91,13 @@ func (s *Server) Churn(ctx context.Context, req *pb.ChurnRequest) (*pb.ChurnRepl
 	}
 
 	// Per-operator rate limiting: check if the request should be rate limited
+	// 每个操作员的速率限制：检查请求是否应该被限制
 	err = s.checkShouldBeRateLimited(now, *request)
 	if err != nil {
 		s.metrics.IncrementFailedRequestNum("Churn", FailReasonRateLimitExceeded)
 		return nil, api.NewResourceExhaustedError(fmt.Sprintf("rate limiter error: %s", err.Error()))
 	}
-
+	// 处理轮换请求
 	response, err := s.churner.ProcessChurnRequest(ctx, operatorToRegisterAddress, request)
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
@@ -103,11 +108,13 @@ func (s *Server) Churn(ctx context.Context, req *pb.ChurnRequest) (*pb.ChurnRepl
 	}
 
 	// update the latest expiry
+	// 更新最新的过期时间
 	s.latestExpiry = response.SignatureWithSaltAndExpiry.Expiry.Int64()
-
+	// 转换操作员轮换信息为gRPC格式
 	operatorsToChurn := convertToOperatorsToChurnGrpc(response.OperatorsToChurn)
-
+	// 增加成功请求计数
 	s.metrics.IncrementSuccessfulRequestNum("Churn")
+	// 返回轮换响应
 	return &pb.ChurnReply{
 		SignatureWithSaltAndExpiry: &pb.SignatureWithSaltAndExpiry{
 			Signature: response.SignatureWithSaltAndExpiry.Signature,
