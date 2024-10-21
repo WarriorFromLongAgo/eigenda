@@ -100,6 +100,10 @@ func NewStdSignatureAggregator(logger logging.Logger, transactor Transactor) (*S
 
 var _ SignatureAggregator = (*StdSignatureAggregator)(nil)
 
+// ReceiveSignatures 方法主要完成以下任务：
+// 接收来自各个操作员的签名消息（通过 update channel）。 验证这些签名的有效性。
+// 聚合这些签名，生成一个仲裁证明（quorum attestation）。
+// 这个方法是批处理过程中的关键步骤，它确保了足够数量的操作员已经正确接收并签名了批次数据。
 func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *IndexedOperatorState, message [32]byte, messageChan chan SigningMessage) (*QuorumAttestation, error) {
 	quorumIDs := make([]QuorumID, 0, len(state.AggKeys))
 	for quorumID := range state.Operators {
@@ -130,6 +134,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 	// Aggregate Signatures
 	numOperators := len(state.IndexedOperators)
 
+	// 从 update channel 读取 SigningMessage。
 	for numReply := 0; numReply < numOperators; numReply++ {
 		var err error
 		r := <-messageChan
@@ -164,6 +169,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 		}
 
 		// Verify Signature
+		// 验证每个签名的有效性，可能会检查签名是否与对应操作员的公钥匹配。
 		sig := r.Signature
 		ok = sig.Verify(op.PubkeyG2, message)
 		if !ok {
@@ -171,6 +177,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 			continue
 		}
 
+		// 统计每个仲裁组（quorum）中的有效签名数量。
 		operatorQuorums := make([]uint8, 0, len(quorumIDs))
 		for _, quorumID := range quorumIDs {
 			// Get stake amounts for operator
@@ -260,6 +267,7 @@ func (a *StdSignatureAggregator) ReceiveSignatures(ctx context.Context, state *I
 		}
 	}
 
+	// 生成一个 quorumAttestation 对象，包含了各个仲裁组的签名状态。
 	return &QuorumAttestation{
 		QuorumAggPubKey:  quorumAggPubKeys,
 		SignersAggPubKey: aggPubKeys,

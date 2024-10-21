@@ -269,21 +269,37 @@ func (s *server) Start() error {
 	{
 		feed := v1.Group("/feed")
 		{
+			// GET /feed/blobs：获取多个Blob的信息
 			feed.GET("/blobs", s.FetchBlobsHandler)
+			// GET /feed/blobs/:blob_key：获取特定Blob的详细信息
 			feed.GET("/blobs/:blob_key", s.FetchBlobHandler)
+			// GET /feed/batches/:batch_header_hash/blobs：根据批次哈希获取相关的Blob信息
 			feed.GET("/batches/:batch_header_hash/blobs", s.FetchBlobsFromBatchHeaderHash)
 		}
 		operatorsInfo := v1.Group("/operators-info")
 		{
+			// GET /operators-info/deregistered-operators：获取已注销的操作员信息
 			operatorsInfo.GET("/deregistered-operators", s.FetchDeregisteredOperators)
+			// GET /operators-info/operator-ejections：获取被驱逐的操作员信息
 			operatorsInfo.GET("/operator-ejections", s.FetchOperatorEjections)
+			// GET /operators-info/registered-operators：获取已注册的操作员信息
 			operatorsInfo.GET("/registered-operators", s.FetchRegisteredOperators)
+			// GET /operators-info/port-check：检查操作员的端口状态
 			operatorsInfo.GET("/port-check", s.OperatorPortCheck)
+			// GET /operators-info/semver-scan：获取语义化版本扫描结果
 			operatorsInfo.GET("/semver-scan", s.SemverScan)
+			// GET /operators-info/operators-stake：获取操作员的质押信息
 			operatorsInfo.GET("/operators-stake", s.OperatorsStake)
 		}
 		metrics := v1.Group("/metrics")
 		{
+			//GET /metrics/：获取一般指标信息
+			//GET /metrics/throughput：获取系统吞吐量指标
+			//GET /metrics/non-signers：获取未签名者的信息
+			//GET /metrics/operator-nonsigning-percentage：获取操作员未签名的百分比
+			//GET /metrics/disperser-service-availability：获取分发服务的可用性指标
+			//GET /metrics/churner-service-availability：获取churner服务的可用性指标
+			//GET /metrics/batcher-service-availability：获取批处理服务的可用性指标
 			metrics.GET("/", s.FetchMetricsHandler)
 			metrics.GET("/throughput", s.FetchMetricsThroughputHandler)
 			metrics.GET("/non-signers", s.FetchNonSigners)

@@ -143,55 +143,68 @@ func (t *txnManager) Start(ctx context.Context) {
 // ProcessTransaction sends the transaction and queues the transaction for monitoring.
 // It returns an error if the transaction fails to be confirmed for reasons other than timeouts.
 // TxnManager monitors the transaction and resends it with a higher gas price if it is not mined without a timeout until the transaction is confirmed or failed.
+// ProcessTransaction 方法的主要功能是发送交易并将交易排队以进行监控。它负责处理交易的发送、重试和更新gas价格等操作，确保交易能够被成功广播到网络中。
+// 这个方法通常在以下情况下被调用：
+// 当需要发送一个新的区块链交易时（例如，确认批次操作）。
+// 在 Batcher 的主循环中，当需要处理新的交易请求时。
 func (t *txnManager) ProcessTransaction(ctx context.Context, req *TxnRequest) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// 2. 记录新交易的详细信息
 	t.logger.Debug("new transaction", "tag", req.Tag, "nonce", req.Tx.Nonce(), "gasFeeCap", req.Tx.GasFeeCap(), "gasTipCap", req.Tx.GasTipCap())
 
 	var txn *types.Transaction
 	var txID walletsdk.TxID
 	var err error
 	retryFromFailure := 0
+	// 3. 尝试发送交易，最多重试 maxSendTransactionRetry 次
 	for retryFromFailure < maxSendTransactionRetry {
+		// 3.1 获取最新的 gas 价格
 		gasTipCap, gasFeeCap, err := t.ethClient.GetLatestGasCaps(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get latest gas caps: %w", err)
 		}
-
+		// 3.2 更新交易的 gas 价格
 		txn, err = t.ethClient.UpdateGas(ctx, req.Tx, req.Value, gasTipCap, gasFeeCap)
 		if err != nil {
 			return fmt.Errorf("failed to update gas price: %w", err)
 		}
+		// 3.3 发送交易
 		txID, err = t.wallet.SendTransaction(ctx, txn)
+		// 3.4 处理发送结果
 		var urlErr *url.Error
 		didTimeout := false
 		if errors.As(err, &urlErr) {
 			didTimeout = urlErr.Timeout()
 		}
 		if didTimeout || errors.Is(err, context.DeadlineExceeded) {
+			// 如果超时，记录警告并重试
 			t.logger.Warn("failed to send txn due to timeout", "tag", req.Tag, "hash", txn.Hash().Hex(), "numRetries", retryFromFailure, "maxRetry", maxSendTransactionRetry, "err", err)
 			retryFromFailure++
 			continue
 		} else if err != nil {
+			// 如果发生其他错误，返回错误
 			return fmt.Errorf("failed to send txn (%s) %s: %w", req.Tag, txn.Hash().Hex(), err)
 		} else {
+			// 发送成功，记录日志并跳出循环
 			t.logger.Debug("successfully sent txn", "tag", req.Tag, "txID", txID, "txHash", txn.Hash().Hex())
 			break
 		}
 	}
-
+	// 4. 检查是否成功发送交易
 	if txn == nil || txID == "" {
 		return fmt.Errorf("failed to send txn (%s) %s: %w", req.Tag, req.Tx.Hash().Hex(), err)
 	}
-
+	// 5. 更新请求中的交易信息
 	req.Tx = txn
 	req.txAttempts = append(req.txAttempts, &transaction{
 		TxID:        txID,
 		Transaction: txn,
 		requestedAt: time.Now(),
 	})
-
+	// 6. 将请求发送到处理通道
 	t.requestChan <- req
+	// 7. 更新交易队列指标
 	t.metrics.UpdateTxQueue(len(t.requestChan))
 	return nil
 }

@@ -97,27 +97,34 @@ func NewDispersalServer(
 	}
 }
 
+// DisperseBlobAuthenticated 与 DisperseBlob 类似，不同之处在于它要求
+// 客户端通过 AuthenticationData 消息验证自身身份。协议如下：
+// 1. 客户端使用 DisperseBlobRequest 消息发送 DisperseBlobAuthenticated 请求
+// 2. Disperser 返回包含客户端要验证和签名的信息的 BlobAuthHeader 消息。
+// 3. 客户端验证 BlobAuthHeader 并在 AuthenticationData 消息中返回已签名的 BlobAuthHeader。
+// 4. Disperser 验证签名并返回 DisperseBlobReply 消息。
 func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_DisperseBlobAuthenticatedServer) error {
-
+	// 设置上下文超时
 	// This uses the existing deadline of stream.Context() if it is earlier.
 	ctx, cancel := context.WithTimeout(stream.Context(), s.serverConfig.GrpcTimeout)
 	defer cancel()
 
 	// Process disperse_request
+	// 接收客户端的分散请求
 	in, err := stream.Recv()
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError(fmt.Sprintf("error receiving next message: %v", err))
 	}
-
+	// 验证请求格式，是否是指定的对象雷系类型
 	request, ok := in.GetPayload().(*pb.AuthenticatedRequest_DisperseRequest)
 	if !ok {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError("missing DisperseBlobRequest")
 	}
-
+	// 验证请求并获取 blob
 	blob, err := s.validateRequestAndGetBlob(ctx, request.DisperseRequest)
 	if err != nil {
 		for _, quorumID := range request.DisperseRequest.CustomQuorumNumbers {
@@ -127,26 +134,31 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 		return api.NewInvalidArgError(err.Error())
 	}
 
+	// 获取与公钥关联的以太坊地址。这只是为了方便，所以我们可以将地址而不是公钥放入允许列表中。
 	// Get the ethereum address associated with the public key. This is just for convenience so we can put addresses instead of public keys in the allowlist.
 	// Decode public key
+	// 解码公钥
 	publicKeyBytes, err := hexutil.Decode(blob.RequestHeader.AccountID)
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError(fmt.Sprintf("failed to decode account ID (%v): %v", blob.RequestHeader.AccountID, err))
 	}
-
+	// 解析公钥
 	pubKey, err := crypto.UnmarshalPubkey(publicKeyBytes)
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError(fmt.Sprintf("failed to decode public key (%v): %v", hexutil.Encode(publicKeyBytes), err))
 	}
-
+	// 获取认证地址
 	authenticatedAddress := crypto.PubkeyToAddress(*pubKey).String()
 
 	// Send back challenge to client
+	// 生成挑战
 	challenge := rand.Uint32()
+	// 发送挑战给客户端，
+	// 生成挑战并发送给客户端是为了实现一个简单的挑战-响应认证机制，这是一种常见的安全实践。
 	err = stream.Send(&pb.AuthenticatedReply{Payload: &pb.AuthenticatedReply_BlobAuthHeader{
 		BlobAuthHeader: &pb.BlobAuthHeader{
 			ChallengeParameter: challenge,
@@ -156,10 +168,13 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 		return err
 	}
 
+	// 创建通道以接收客户端响应
 	// Create a channel for the result of stream.Recv()
 	resultCh := make(chan *pb.AuthenticatedRequest)
 	errCh := make(chan error)
 
+	// 在 goroutine 中接收客户端响应
+	// 客户端首先需要实现一个流式 gRPC 服务，该服务应该实现 pb.Disperser_DisperseBlobAuthenticatedServer 接口。
 	// Run stream.Recv() in a goroutine
 	go func() {
 		in, err := stream.Recv()
@@ -170,6 +185,7 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 		resultCh <- in
 	}()
 
+	// 等待客户端响应或上下文超时
 	// Use select to wait on either the result of stream.Recv() or the context being done
 	select {
 	case in = <-resultCh:
@@ -182,17 +198,18 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError("context deadline exceeded")
 	}
-
+	// 验证客户端响应
 	challengeReply, ok := in.GetPayload().(*pb.AuthenticatedRequest_AuthenticationData)
 	if !ok {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
 		s.metrics.HandleInvalidArgRequest("DisperseBlobAuthenticated")
 		return api.NewInvalidArgError("expected AuthenticationData")
 	}
-
+	// 设置认证数据
 	blob.RequestHeader.Nonce = challenge
 	blob.RequestHeader.AuthenticationData = challengeReply.AuthenticationData.GetAuthenticationData()
-
+	// 认证 blob 请求
+	// 是一个用于验证 blob 请求的方法。根据代码中的上下文，这个方法的主要功能是验证客户端对挑战的响应，确保请求是由合法的客户端发送的。
 	err = s.authenticator.AuthenticateBlobRequest(blob.RequestHeader.BlobAuthHeader)
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("DisperseBlobAuthenticated")
@@ -201,6 +218,7 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 	}
 
 	// Disperse the blob
+	// 分散 blob 数据
 	reply, err := s.disperseBlob(ctx, blob, authenticatedAddress, "DisperseBlobAuthenticated")
 	if err != nil {
 		// Note the disperseBlob already updated metrics for this error.
@@ -209,6 +227,7 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 	}
 
 	// Send back disperse_reply
+	// 发送处理结果给客户端，分散 blob 数据的结果
 	err = stream.Send(&pb.AuthenticatedReply{Payload: &pb.AuthenticatedReply_DisperseReply{
 		DisperseReply: reply,
 	}})
@@ -216,13 +235,16 @@ func (s *DispersalServer) DisperseBlobAuthenticated(stream pb.Disperser_Disperse
 		s.logger.Error("failed to stream back DisperseReply", "err", err)
 		return err
 	}
-
+	// 更新成功指标
 	s.metrics.HandleSuccessfulRpcRequest("DisperseBlobAuthenticated")
 
 	return nil
 
 }
 
+// DisperseBlob
+// 此 API 接受来自客户端的 blob 分散请求。
+// 这将执行分散异步操作，即，一旦请求被接受，它就会返回。客户端可以使用 GetBlobStatus() API 来轮询 blob 的处理状态。
 func (s *DispersalServer) DisperseBlob(ctx context.Context, req *pb.DisperseBlobRequest) (*pb.DisperseBlobReply, error) {
 	blob, err := s.validateRequestAndGetBlob(ctx, req)
 	if err != nil {
@@ -246,21 +268,24 @@ func (s *DispersalServer) DisperseBlob(ctx context.Context, req *pb.DisperseBlob
 // Note: disperseBlob will internally update metrics upon an error; the caller doesn't need
 // to track the error again.
 func (s *DispersalServer) disperseBlob(ctx context.Context, blob *core.Blob, authenticatedAddress string, apiMethodName string) (*pb.DisperseBlobReply, error) {
+	// 创建一个计时器，用于观察 DisperseBlob 操作的延迟
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(f float64) {
+		// 转换为毫秒
 		s.metrics.ObserveLatency("DisperseBlob", f*1000) // make milliseconds
 	}))
 	defer timer.ObserveDuration()
-
+	// 提取安全参数并转换为字符串，用于日志记录
 	securityParams := blob.RequestHeader.SecurityParams
 	securityParamsStrings := make([]string, len(securityParams))
 	for i, sp := range securityParams {
 		securityParamsStrings[i] = sp.String()
 	}
-
+	// 获取 blob 大小
 	blobSize := len(blob.Data)
-
+	// 获取客户端地址
 	origin, err := common.GetClientAddress(ctx, s.rateConfig.ClientIPHeader, 2, true)
 	if err != nil {
+		// 如果获取客户端地址失败，记录错误并返回
 		for _, param := range securityParams {
 			s.metrics.HandleFailedRequest(codes.InvalidArgument.String(), fmt.Sprintf("%d", param.QuorumID), blobSize, apiMethodName)
 		}
@@ -268,8 +293,9 @@ func (s *DispersalServer) disperseBlob(ctx context.Context, blob *core.Blob, aut
 		return nil, api.NewInvalidArgError(err.Error())
 	}
 
+	// 记录接收到新的 blob 分散请求的日志
 	s.logger.Debug("received a new blob dispersal request", "authenticatedAddress", authenticatedAddress, "origin", origin, "blobSizeBytes", blobSize, "securityParams", strings.Join(securityParamsStrings, ", "))
-
+	// 如果启用了速率限制，检查速率限制并添加速率到头部
 	if s.ratelimiter != nil {
 		err := s.checkRateLimitsAndAddRatesToHeader(ctx, blob, origin, authenticatedAddress, apiMethodName)
 		if err != nil {
@@ -277,10 +303,12 @@ func (s *DispersalServer) disperseBlob(ctx context.Context, blob *core.Blob, aut
 			return nil, err
 		}
 	}
-
+	// 获取当前时间戳
 	requestedAt := uint64(time.Now().UnixNano())
+	// 存储 blob
 	metadataKey, err := s.blobStore.StoreBlob(ctx, blob, requestedAt)
 	if err != nil {
+		// 如果存储失败，记录错误并返回
 		for _, param := range securityParams {
 			s.metrics.HandleBlobStoreFailedRequest(fmt.Sprintf("%d", param.QuorumID), blobSize, apiMethodName)
 		}
@@ -288,23 +316,25 @@ func (s *DispersalServer) disperseBlob(ctx context.Context, blob *core.Blob, aut
 		s.logger.Error("failed to store blob", "err", err)
 		return nil, api.NewInternalError("failed to store blob, please try again later")
 	}
-
+	// 对每个安全参数记录成功请求
 	for _, param := range securityParams {
 		s.metrics.HandleSuccessfulRequest(fmt.Sprintf("%d", param.QuorumID), blobSize, apiMethodName)
 	}
-
+	// 返回处理中的状态和请求 ID
 	return &pb.DisperseBlobReply{
 		Result:    pb.BlobStatus_PROCESSING,
 		RequestId: []byte(metadataKey.String()),
 	}, nil
 }
 
+// getAccountRate 获取账户的速率限制信息
 func (s *DispersalServer) getAccountRate(origin, authenticatedAddress string, quorumID core.QuorumID) (*PerUserRateInfo, string, error) {
+	// 获取指定 quorumID 的未认证速率信息
 	unauthRates, ok := s.rateConfig.QuorumRateInfos[quorumID]
 	if !ok {
 		return nil, "", fmt.Errorf("no configured rate exists for quorum %d", quorumID)
 	}
-
+	// 初始化默认速率信息
 	rates := &PerUserRateInfo{
 		Name:       "",
 		Throughput: unauthRates.PerUserUnauthThroughput,
@@ -312,11 +342,13 @@ func (s *DispersalServer) getAccountRate(origin, authenticatedAddress string, qu
 	}
 
 	// Check if the address is in the allowlist
+	// 检查认证地址是否在允许列表中
 	if len(authenticatedAddress) > 0 {
 		quorumRates, ok := s.rateConfig.Allowlist[authenticatedAddress]
 		if ok {
 			rateInfo, ok := quorumRates[quorumID]
 			if ok {
+				// 使用允许列表中的速率信息
 				key := "address:" + authenticatedAddress
 				if rateInfo.Throughput > 0 {
 					rates.Throughput = rateInfo.Throughput
@@ -330,6 +362,7 @@ func (s *DispersalServer) getAccountRate(origin, authenticatedAddress string, qu
 		}
 	}
 
+	// 如果认证地址不在允许列表中，使用源IP作为账户键
 	// Check if the origin is in the allowlist
 
 	// If the origin is not in the allowlist, we use the origin as the account key since
@@ -428,6 +461,15 @@ type limiterInfo struct {
 //
 // This information is currently passed to the DA nodes for their use is ratelimiting retrieval requests. This retrieval ratelimiting
 // is a temporary measure until the DA nodes are able to determine rates by themselves and will be simplified or replaced in the future.
+// checkRateLimitsAndAddRatesToHeader 检查 blob 安全参数中所有 quorum 的配置速率限制，
+// 包括系统和帐户级别速率，相对于 blob 速率和数据带宽速率。
+// 该函数将检查经过身份验证的地址（如果经过身份验证）和源的白名单条目。
+// 如果未找到源或经过身份验证的地址的白名单条目，则将使用源作为帐户密钥
+// 并使用未经身份验证的速率。如果超出速率限制，该函数将返回 ResourceExhaustedError。
+// checkRateLimitsAndAddRatesToHeader 还将使用每个 qourum 的吞吐率更新 blob 的安全参数。
+//
+// 此信息当前传递给 DA 节点，供其用于限制检索请求的速率。此检索速率限制
+// 是一种临时措施，直到 DA 节点能够自行确定速率为止，将来将被简化或替换。
 func (s *DispersalServer) checkRateLimitsAndAddRatesToHeader(ctx context.Context, blob *core.Blob, origin, authenticatedAddress string, apiMethodName string) error {
 
 	requestParams := make([]common.RequestParams, 0)
@@ -549,12 +591,15 @@ func (s *DispersalServer) checkRateLimitsAndAddRatesToHeader(ctx context.Context
 
 }
 
+// GetBlobStatus 此 API 用于轮询 Blob 状态。
 func (s *DispersalServer) GetBlobStatus(ctx context.Context, req *pb.BlobStatusRequest) (*pb.BlobStatusReply, error) {
+	// 创建一个计时器，用于观察 GetBlobStatus 操作的延迟
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(f float64) {
 		s.metrics.ObserveLatency("GetBlobStatus", f*1000) // make milliseconds
 	}))
 	defer timer.ObserveDuration()
 
+	// 解析请求中的 blob 键
 	requestID := req.GetRequestId()
 	if len(requestID) == 0 {
 		s.metrics.HandleInvalidArgRpcRequest("GetBlobStatus")
@@ -563,6 +608,7 @@ func (s *DispersalServer) GetBlobStatus(ctx context.Context, req *pb.BlobStatusR
 	}
 
 	s.logger.Info("received a new blob status request", "requestID", string(requestID))
+	// 解析请求中的 blob 键
 	metadataKey, err := disperser.ParseBlobKey(string(requestID))
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("GetBlobStatus")
@@ -571,6 +617,7 @@ func (s *DispersalServer) GetBlobStatus(ctx context.Context, req *pb.BlobStatusR
 	}
 
 	s.logger.Debug("metadataKey", "metadataKey", metadataKey.String())
+	// 从 blob 存储中获取 blob 元数据
 	metadata, err := s.blobStore.GetBlobMetadata(ctx, metadataKey)
 	if err != nil {
 		if errors.Is(err, disperser.ErrMetadataNotFound) {
@@ -581,17 +628,19 @@ func (s *DispersalServer) GetBlobStatus(ctx context.Context, req *pb.BlobStatusR
 		s.metrics.HandleInternalFailureRpcRequest("GetBlobStatus")
 		return nil, api.NewInternalError(fmt.Sprintf("failed to get blob metadata, blobkey: %s", metadataKey.String()))
 	}
-
+	// 检查 blob 是否已确认
 	isConfirmed, err := metadata.IsConfirmed()
 	if err != nil {
 		s.metrics.HandleInternalFailureRpcRequest("GetBlobStatus")
 		return nil, api.NewInternalError(fmt.Sprintf("missing confirmation information: %s", err.Error()))
 	}
-
+	// 记录成功处理请求的指标
 	s.metrics.HandleSuccessfulRpcRequest("GetBlobStatus")
 
 	s.logger.Debug("isConfirmed", "metadataKey", metadataKey, "isConfirmed", isConfirmed)
 	if isConfirmed {
+		// 构建确认状态的详细信息
+
 		confirmationInfo := metadata.ConfirmationInfo
 		dataLength := uint32(confirmationInfo.BlobCommitment.Length)
 		quorumResults := confirmationInfo.QuorumResults
@@ -656,19 +705,25 @@ func (s *DispersalServer) GetBlobStatus(ctx context.Context, req *pb.BlobStatusR
 			},
 		}, nil
 	}
-
+	// 如果 blob 未确认，返回简单的状态回复
 	return &pb.BlobStatusReply{
 		Status: getResponseStatus(metadata.BlobStatus),
 		Info:   &pb.BlobInfo{},
 	}, nil
 }
 
+// RetrieveBlob
+// 这将从 Disperser 的后端检索所请求的 blob。
+// 这是一种比直接从 DA 节点检索更有效的检索 blob 的方法（有关此方法的详细信息，请参阅 api/proto/retriever/retriever.proto）。
+// 为了使此 API 正常工作，blob 应该首先通过此 Disperser 服务进行分散。
 func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlobRequest) (*pb.RetrieveBlobReply, error) {
+	// 创建一个计时器，用于观察 RetrieveBlob 操作的延迟
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(func(f float64) {
 		s.metrics.ObserveLatency("RetrieveBlob", f*1000) // make milliseconds
 	}))
 	defer timer.ObserveDuration()
 
+	// 获取客户端地址
 	origin, err := common.GetClientAddress(ctx, s.rateConfig.ClientIPHeader, 2, true)
 	if err != nil {
 		s.metrics.HandleInvalidArgRpcRequest("RetrieveBlob")
@@ -678,7 +733,9 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 
 	stageTimer := time.Now()
 	// Check blob rate limit
+	// 检查速率限制（如果启用）
 	if s.ratelimiter != nil {
+		// 检查吞吐量速率限制
 		allowed, param, err := s.ratelimiter.AllowRequest(ctx, []common.RequestParams{
 			{
 				RequesterID: fmt.Sprintf("%s:%s", origin, RetrievalBlobRateType.Plug()),
@@ -691,6 +748,7 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 			s.metrics.HandleInternalFailureRpcRequest("RetrieveBlob")
 			return nil, api.NewInternalError(fmt.Sprintf("ratelimiter error: %v", err))
 		}
+		// 处理速率限制检查结果
 		if !allowed {
 			s.metrics.HandleRateLimitedRpcRequest("RetrieveBlob")
 			s.metrics.HandleFailedRequest(codes.ResourceExhausted.String(), "", 0, "RetrieveBlob")
@@ -705,6 +763,7 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 	s.logger.Debug("checked retrieval blob rate limiting", "requesterID", fmt.Sprintf("%s:%s", origin, RetrievalBlobRateType.Plug()), "duration", time.Since(stageTimer).String())
 	s.logger.Info("received a new blob retrieval request", "batchHeaderHash", req.BatchHeaderHash, "blobIndex", req.BlobIndex)
 
+	// 解析请求参数
 	batchHeaderHash := req.GetBatchHeaderHash()
 	// Convert to [32]byte
 	var batchHeaderHash32 [32]byte
@@ -713,8 +772,10 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 	blobIndex := req.GetBlobIndex()
 
 	stageTimer = time.Now()
+	// 获取 blob 元数据
 	blobMetadata, err := s.blobStore.GetMetadataInBatch(ctx, batchHeaderHash32, blobIndex)
 	if err != nil {
+		// 处理 blob 过期的情况
 		s.logger.Error("Failed to retrieve blob metadata", "err", err)
 		if errors.Is(err, disperser.ErrMetadataNotFound) {
 			s.metrics.HandleNotFoundRpcRequest("RetrieveBlob")
@@ -735,6 +796,7 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 	s.logger.Debug("fetched blob metadata", "batchHeaderHash", req.BatchHeaderHash, "blobIndex", req.BlobIndex, "duration", time.Since(stageTimer).String())
 
 	stageTimer = time.Now()
+	// 检查吞吐量速率限制
 	// Check throughout rate limit
 	blobSize := encoding.GetBlobSize(blobMetadata.ConfirmationInfo.BlobCommitment.Length)
 
@@ -764,6 +826,7 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 	}
 	s.logger.Debug("checked retrieval throughput rate limiting", "requesterID", fmt.Sprintf("%s:%s", origin, RetrievalThroughputType.Plug()), "duration (ms)", time.Since(stageTimer).String())
 
+	// 从存储中获取 blob 内容
 	stageTimer = time.Now()
 	data, err := s.blobStore.GetBlobContent(ctx, blobMetadata.BlobHash)
 	if err != nil {
@@ -772,11 +835,12 @@ func (s *DispersalServer) RetrieveBlob(ctx context.Context, req *pb.RetrieveBlob
 		s.metrics.HandleFailedRequest(codes.Internal.String(), "", len(data), "RetrieveBlob")
 		return nil, api.NewInternalError("failed to get blob data, please retry")
 	}
+	// 记录成功指标
 	s.metrics.HandleSuccessfulRpcRequest("RetrieveBlob")
 	s.metrics.HandleSuccessfulRequest("", len(data), "RetrieveBlob")
 
 	s.logger.Debug("fetched blob content", "batchHeaderHash", req.BatchHeaderHash, "blobIndex", req.BlobIndex, "data size (bytes)", len(data), "duration", time.Since(stageTimer).String())
-
+	// 返回 blob 数据
 	return &pb.RetrieveBlobReply{
 		Data: data,
 	}, nil
@@ -801,23 +865,26 @@ func (s *DispersalServer) Start(ctx context.Context) error {
 	}()
 	// Serve grpc requests
 	addr := fmt.Sprintf("%s:%s", disperser.Localhost, s.serverConfig.GrpcPort)
+	// 使用配置的GrpcPort创建一个TCP监听器。
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return errors.New("could not start tcp listener")
 	}
-
+	// 设置最大接收消息大小为300 MiB。
 	opt := grpc.MaxRecvMsgSize(1024 * 1024 * 300) // 300 MiB
-
+	// 使用上述选项创建一个新的gRPC服务器。
 	gs := grpc.NewServer(opt)
+	// 注册反射服务,用于gRPC调试。
 	reflection.Register(gs)
+	// 注册Disperser服务。
 	pb.RegisterDisperserServer(gs, s)
-
+	// 注册健康检查服务。
 	// Register Server for Health Checks
 	name := pb.Disperser_ServiceDesc.ServiceName
 	healthcheck.RegisterHealthServer(name, gs)
 
 	s.logger.Info("GRPC Listening", "port", s.serverConfig.GrpcPort, "address", listener.Addr().String(), "maxBlobSize", s.maxBlobSize)
-
+	// 调用Serve方法开始处理gRPC请求。
 	if err := gs.Serve(listener); err != nil {
 		return errors.New("could not start GRPC server")
 	}
@@ -843,7 +910,10 @@ func (s *DispersalServer) LoadAllowlist() {
 // it will fallback to the old quorumConfig if it is set. This is to improve the robustness of the disperser to
 // RPC failures since the quorum config is rarely updated. In the event that quorumConfig is incorrect, this will
 // not result in a safety failure since all parameters are separately validated on the smart contract.
-
+// updateQuorumConfig 更新仲裁配置并返回更新后的仲裁配置。如果更新失败，
+// 它将回退到旧的 quorumConfig（如果已设置）。这是为了提高分散器对
+// RPC 故障的稳健性，因为仲裁配置很少更新。如果 quorumConfig 不正确，这将
+// 不会导致安全故障，因为所有参数都在智能合约上单独验证。
 func (s *DispersalServer) updateQuorumConfig(ctx context.Context) (QuorumConfig, error) {
 
 	s.mu.RLock()

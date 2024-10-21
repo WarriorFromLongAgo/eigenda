@@ -86,6 +86,7 @@ func NewTransactor(
 }
 
 // GetRegisteredQuorumIdsForOperator returns the quorum ids that the operator is registered in with the given public key.
+// 获取操作员在给定公钥下注册的仲裁 ID。
 func (t *Transactor) GetRegisteredQuorumIdsForOperator(ctx context.Context, operator core.OperatorID) ([]core.QuorumID, error) {
 	// TODO: Properly handle the case where the operator is not registered in any quorum. The current behavior of the smart contracts is to revert instead of returning an empty bitmap.
 	//  We should probably change this.
@@ -466,6 +467,7 @@ func (t *Transactor) GetOperatorStakesForQuorums(ctx context.Context, quorums []
 // BuildConfirmBatchTxn builds a transaction to confirm a batch header and signature aggregation. The signature aggregation must satisfy the quorum thresholds
 // specified in the batch header. If the signature aggregation does not satisfy the quorum thresholds, the transaction will fail.
 // Note that this function returns a transaction without publishing it to the blockchain. The caller is responsible for publishing the transaction.
+// 构建确认批次的交易，包括准备批次头、聚合签名等数据
 func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core.BatchHeader, quorums map[core.QuorumID]*core.QuorumResult, signatureAggregation *core.SignatureAggregation) (*types.Transaction, error) {
 	quorumNumbers := quorumParamsToQuorumNumbers(quorums)
 	nonSignerOperatorIds := make([][32]byte, len(signatureAggregation.NonSigners))
@@ -565,6 +567,7 @@ func (t *Transactor) OperatorIDToAddress(ctx context.Context, operatorId core.Op
 	}, operatorId)
 }
 
+// OperatorAddressToID 获取操作员的 ID。
 func (t *Transactor) OperatorAddressToID(ctx context.Context, address gethcommon.Address) (core.OperatorID, error) {
 	return t.Bindings.BLSApkRegistry.GetOperatorId(&bind.CallOpts{
 		Context: ctx,

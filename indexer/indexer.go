@@ -73,6 +73,9 @@ func New(
 func (i *indexer) Index(ctx context.Context) error {
 
 	// Check if any of the accumulators are uninitialized
+	// 1. 初始化检查
+	// 检查所有累加器是否已初始化，它主要用于跟踪和累积区块链上的状态变化
+	// 与累加器相关的还有一个过滤器（Filterer），用于筛选出相关的区块头和事件。
 	initialized := true
 	for _, h := range i.Handlers {
 		_, _, err := i.HeaderStore.GetLatestObject(h.Acc, false)
@@ -82,7 +85,8 @@ func (i *indexer) Index(ctx context.Context) error {
 	}
 
 	// Find the latest block that we can fast forward to.
-
+	// 2. 获取最新区块头
+	// 从客户端获取最新的区块头
 	clientLatestHeader, err := i.HeaderService.PullLatestHeader(true)
 	if err != nil {
 		i.Logger.Error("Error pulling latest header", "err", err)
@@ -90,7 +94,8 @@ func (i *indexer) Index(ctx context.Context) error {
 	}
 
 	syncFromBlock := maxUint
-
+	// 3. 确定同步起始点
+	// 找到可以快速前进到的最新区块
 	for _, h := range i.Handlers {
 		bn, err := h.Filterer.GetSyncPoint(clientLatestHeader)
 		if err != nil {
@@ -100,22 +105,24 @@ func (i *indexer) Index(ctx context.Context) error {
 			syncFromBlock = bn
 		}
 	}
-
+	// 4. 检查升级点
+	// 获取最新的升级区块号
 	bn := i.UpgradeForkWatcher.GetLatestUpgrade(clientLatestHeader)
 	if syncFromBlock > bn {
 		syncFromBlock = bn
 	}
-
+	// 5. 快速前进（如果需要）
 	myLatestHeader, err := i.HeaderStore.GetLatestHeader(true)
 	if err != nil || !initialized || syncFromBlock-myLatestHeader.Number > maxSyncBlocks {
 		i.Logger.Info("Fast forwarding to sync block", "block", syncFromBlock)
 		// This probably just wipes the HeaderStore clean
+		// 清除 HeaderStore
 		ffErr := i.HeaderStore.FastForward()
 
 		if ffErr != nil && !errors.Is(ffErr, ErrNoHeaders) {
 			return ffErr
 		}
-
+		// 为每个处理器设置同步点
 		for _, h := range i.Handlers {
 			err := h.Filterer.SetSyncPoint(clientLatestHeader)
 			if err != nil {
@@ -128,14 +135,16 @@ func (i *indexer) Index(ctx context.Context) error {
 	if err == nil {
 		i.Logger.Debug("Index", "finalized", myLatestHeader.Number)
 	}
-
+	// 6. 启动主循环
 	go func() {
 	loop:
 		for {
 			select {
 			case <-ctx.Done():
+				// 上下文取消时退出循环
 				break loop // returning not to leak the goroutine
 			default:
+				// 7. 获取最新的已确认区块头
 				latestFinalizedHeader, err := i.HeaderStore.GetLatestHeader(true)
 				if errors.Is(err, ErrNoHeaders) {
 					// TODO: Set the latestFinalized to a config value reflecting the point at which the contract was deployed
@@ -147,7 +156,7 @@ func (i *indexer) Index(ctx context.Context) error {
 					time.Sleep(i.PullInterval)
 					continue loop
 				}
-
+				// 8. 拉取新的区块头
 				headers, isHead, err := i.HeaderService.PullNewHeaders(latestFinalizedHeader)
 				if err != nil {
 					i.Logger.Error("Error pulling new headers", "err", err)
@@ -156,15 +165,16 @@ func (i *indexer) Index(ctx context.Context) error {
 				}
 
 				if len(headers) > 0 {
+					// 9. 检测升级
 					headers = i.UpgradeForkWatcher.DetectUpgrade(headers)
-
+					// 10. 添加新的区块头到存储
 					newHeaders, err := i.HeaderStore.AddHeaders(headers)
 					if err != nil {
 						i.Logger.Error("Error adding headers", "err", err)
 						// TODO: Properly think through error handling
 						continue loop
 					}
-
+					// 11. 处理每个累加器
 					for _, h := range i.Handlers {
 						if h.Status == Good {
 							err := i.HandleAccumulator(h.Acc, h.Filterer, newHeaders)
@@ -176,7 +186,7 @@ func (i *indexer) Index(ctx context.Context) error {
 						}
 					}
 				}
-
+				// 12. 如果到达最新区块，等待一段时间后继续
 				if isHead {
 					time.Sleep(i.PullInterval)
 				}

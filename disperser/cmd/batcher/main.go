@@ -67,43 +67,56 @@ func main() {
 	select {}
 }
 
+// RunBatcher 服务的主要作用是处理和管理 EigenDA 系统中的数据批处理过程。具体来说，它的功能包括：
+// 创建批次：从队列中收集待处理的 blobs（数据块），并将它们组合成批次。
+// 编码：使用编码器客户端对批次中的数据进行编码处理。
+// 分发：将编码后的数据块分发给网络中的节点。
+// 链上确认：在区块链上确认批次的处理状态。
+// 状态管理：管理批次和 blob 的处理状态，包括恢复之前的状态。
+// 指标收集：收集和报告与批处理相关的各种指标。
+// 7. 交易管理：处理与批次确认相关的区块链交易。
+// 链状态同步：与区块链保持同步，获取最新的链上状态。
 func RunBatcher(ctx *cli.Context) error {
-
+	// 1. 清理环境
+	// 删除就绪文件，为新的服务启动做准备
 	// Clean up readiness file
 	if err := os.Remove(readinessProbePath); err != nil {
 		log.Printf("Failed to clean up readiness file: %v at path %v \n", err, readinessProbePath)
 	}
-
+	// 2. 加载配置
+	// 从命令行上下文加载配置
 	config, err := NewConfig(ctx)
 	if err != nil {
 		return err
 	}
-
+	// 3. 初始化日志记录器
 	logger, err := common.NewLogger(config.LoggerConfig)
 	if err != nil {
 		return err
 	}
-
+	// 4. 设置 AWS 服务
+	// 初始化 S3 客户端
 	bucketName := config.BlobstoreConfig.BucketName
 	s3Client, err := s3.NewClient(context.Background(), config.AwsClientConfig, logger)
 	if err != nil {
 		return err
 	}
 	logger.Info("Initialized S3 client", "bucket", bucketName)
-
+	// 初始化 DynamoDB 客户端
 	dynamoClient, err := dynamodb.NewClient(config.AwsClientConfig, logger)
 	if err != nil {
 		return err
 	}
-
+	// 5. 设置指标收集
 	metrics := batcher.NewMetrics(config.MetricsConfig.HTTPPort, logger)
-
+	// 6. 初始化分发器
 	dispatcher := dispatcher.NewDispatcher(&dispatcher.Config{
 		Timeout:                   config.TimeoutConfig.AttestationTimeout,
 		EnableGnarkBundleEncoding: config.EnableGnarkBundleEncoding,
 	}, logger, metrics.DispatcherMetrics)
 	asgn := &core.StdAssignmentCoordinator{}
-
+	// 7. 设置以太坊客户端和钱包
+	// 根据配置初始化以太坊客户端和钱包
 	var wallet walletsdk.Wallet
 	var client *geth.MultiHomingClient
 	if !config.KMSKeyConfig.Disable {
@@ -171,6 +184,8 @@ func RunBatcher(ctx *cli.Context) error {
 		return errors.New("eth client is not configured")
 	}
 
+	// 8. 设置区块链交互组件
+	// 初始化交易管理器、链状态等
 	// used by non graph indexer
 	rpcClient, err := rpc.Dial(config.EthClientConfig.RPCURLs[0])
 	if err != nil {
@@ -184,19 +199,25 @@ func RunBatcher(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	// 从合约中，获取一个称为 "BLOCK_STALE_MEASURE" 的参数。这个参数可能用于确定区块在什么时候被认为是"过时"的。在分布式系统中，这种测量通常用于处理网络延迟和临时分叉的情况。
 	blockStaleMeasure, err := tx.GetBlockStaleMeasure(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get BLOCK_STALE_MEASURE: %w", err)
 	}
+	// 从合约中，获取一个称为 "STORE_DURATION_BLOCKS" 的参数。这个参数可能表示数据应该被存储的区块数量。在 EigenDA 系统中，这可能用于确定数据应该被保留多长时间。
 	storeDurationBlocks, err := tx.GetStoreDurationBlocks(context.Background())
 	if err != nil || storeDurationBlocks == 0 {
 		return fmt.Errorf("failed to get STORE_DURATION_BLOCKS: %w", err)
 	}
+
+	// 9. 设置 blob 存储
 	blobMetadataStore := blobstore.NewBlobMetadataStore(dynamoClient, logger, config.BlobstoreConfig.TableName, config.BlobstoreConfig.ShadowTableName, time.Duration((storeDurationBlocks+blockStaleMeasure)*12)*time.Second)
 	queue := blobstore.NewSharedStorage(bucketName, s3Client, blobMetadataStore, logger)
 
+	// 10. 设置链状态和索引器
 	cs := coreeth.NewChainState(tx, client)
 
+	// 根据配置选择使用 Graph 节点或内置索引器
 	var ics core.IndexedChainState
 	if config.UseGraph {
 		logger.Info("Using graph node")
@@ -225,20 +246,24 @@ func RunBatcher(ctx *cli.Context) error {
 	if len(config.BatcherConfig.EncoderSocket) == 0 {
 		return errors.New("encoder socket must be specified")
 	}
+	// 11. 设置编码器客户端
 	encoderClient, err := encoder.NewEncoderClient(config.BatcherConfig.EncoderSocket, config.TimeoutConfig.EncodingTimeout)
 	if err != nil {
 		return err
 	}
+
+	// 12. 初始化终结器和交易管理器
 	finalizer := batcher.NewFinalizer(config.TimeoutConfig.ChainReadTimeout, config.BatcherConfig.FinalizerInterval, queue, client, rpcClient, config.BatcherConfig.MaxNumRetriesPerBlob, 1000, config.BatcherConfig.FinalizerPoolSize, logger, metrics.FinalizerMetrics)
 	txnManager := batcher.NewTxnManager(client, wallet, config.EthClientConfig.NumConfirmations, 20, config.TimeoutConfig.TxnBroadcastTimeout, config.TimeoutConfig.ChainWriteTimeout, logger, metrics.TxnManagerMetrics)
 
 	// Enable Metrics Block
+	// 13. 启用指标收集（如果配置了）
 	if config.MetricsConfig.EnableMetrics {
 		httpSocket := fmt.Sprintf(":%s", config.MetricsConfig.HTTPPort)
 		metrics.Start(context.Background())
 		logger.Info("Enabled metrics for Batcher", "socket", httpSocket)
 	}
-
+	// 14. 创建并启动 Batcher
 	batcher, err := batcher.NewBatcher(config.BatcherConfig, config.TimeoutConfig, queue, dispatcher, ics, asgn, encoderClient, agg, client, finalizer, tx, txnManager, logger, metrics, handleBatchLivenessChan)
 	if err != nil {
 		return err
@@ -249,6 +274,8 @@ func RunBatcher(ctx *cli.Context) error {
 	}
 
 	// Signal readiness
+	// 15. 标记服务就绪
+	// 创建就绪文件，表示服务已准备好接受请求
 	if _, err := os.Create(readinessProbePath); err != nil {
 		log.Printf("Failed to create readiness file: %v at path %v \n", err, readinessProbePath)
 	}

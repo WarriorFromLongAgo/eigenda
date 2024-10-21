@@ -31,6 +31,11 @@ var _ dacommon.EthClient = (*MultiHomingClient)(nil)
 // error (i.e. any Non EVM error). Then the next EthClient is chosen in a round robin fashion, and the same rpc call
 // can be retried. The total number of retry is configured through cli argument. When the rpc call has used up all
 // the retry opportunity, the rpc would fail and return error. The MultiHomingClient assumes a single private key.
+// NewMultiHomingClient 是一个 EthClient，它通过循环多个 RPC 客户端来自动处理 RPC 故障和重试。下面的所有 EthClient 在整个生命周期内都保持活动连接。
+// MultiHomingClient 继续使用相同的 EthClient 进行新的 RPC 调用，直到遇到连接
+// 错误（即任何非 EVM 错误）。然后以循环方式选择下一个 EthClient，并且可以重试相同的 rpc 调用
+// 。重试的总次数通过 cli 参数配置。当 rpc 调用用尽所有
+// 重试机会时，rpc 将失败并返回错误。MultiHomingClient 假设只有一个私钥。
 func NewMultiHomingClient(config EthClientConfig, senderAddress gethcommon.Address, logger logging.Logger) (*MultiHomingClient, error) {
 	rpcUrls := config.RPCURLs
 

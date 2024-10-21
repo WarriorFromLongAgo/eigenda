@@ -142,6 +142,13 @@ type BatchIndexExclusiveStartKey struct {
 	BlobIndex       uint32
 }
 
+// BlobStore 主要负责 blob（数据块）的存储和元数据管理。它的主要功能包括：
+// 存储和检索 blob 内容
+// 管理 blob 的状态（如处理中、已确认、失败等）
+// 更新 blob 的元数据信息
+// 处理 blob 的批次信息
+// 提供分页查询功能
+// 简而言之，BlobStore 是一个数据存储和管理层，负责 blob 的生命周期管理。
 type BlobStore interface {
 	// StoreBlob adds a blob to the queue and returns a key that can be used to retrieve the blob later
 	StoreBlob(ctx context.Context, blob *core.Blob, requestedAt uint64) (BlobKey, error)
@@ -187,6 +194,12 @@ type BlobStore interface {
 	HandleBlobFailure(ctx context.Context, metadata *BlobMetadata, maxRetry uint) (bool, error)
 }
 
+// Dispatcher 主要负责 blob 的分发和验证过程。它的主要功能包括：
+// 分发批次（DisperseBatch）：将编码后的 blob 分发给网络中的节点
+// 向特定操作者发送 blob（SendBlobsToOperator）
+// 批次认证（AttestBatch）：请求节点对批次进行认证
+// 发送批次认证请求（SendAttestBatchRequest）
+// Dispatcher 是一个网络通信层，负责将数据分发到网络中的各个节点，并处理相关的认证和验证过程。
 type Dispatcher interface {
 	DisperseBatch(context.Context, *core.IndexedOperatorState, []core.EncodedBlob, *core.BatchHeader) chan core.SigningMessage
 	SendBlobsToOperator(ctx context.Context, blobs []*core.EncodedBlobMessage, batchHeader *core.BatchHeader, op *core.IndexedOperatorInfo) ([]*core.Signature, error)

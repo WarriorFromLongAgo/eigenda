@@ -121,6 +121,9 @@ func (s *BlobMetadataStore) GetBulkBlobMetadata(ctx context.Context, blobKeys []
 // GetBlobMetadataByStatus returns all the metadata with the given status
 // Because this function scans the entire index, it should only be used for status with a limited number of items.
 // It should only be used to filter "Processing" status. To support other status, a streaming version should be implemented.
+// GetBlobMetadataByStatus 返回具有给定状态的所有元数据
+// 由于此函数扫描整个索引，因此它只应用于具有有限数量项目的状态。
+// 它只应用于过滤“处理中”状态。要支持其他状态，应实现流式版本。
 func (s *BlobMetadataStore) GetBlobMetadataByStatus(ctx context.Context, status disperser.BlobStatus) ([]*disperser.BlobMetadata, error) {
 	items, err := s.dynamoDBClient.QueryIndex(ctx, s.tableName, expiryIndexName, "BlobStatus = :status AND Expiry > :expiry", commondynamodb.ExpressionValues{
 		":status": &types.AttributeValueMemberN{
