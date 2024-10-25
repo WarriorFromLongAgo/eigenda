@@ -38,8 +38,8 @@ contract EigenDAServiceManager is EigenDAServiceManagerStorage, ServiceManagerBa
         IRegistryCoordinator __registryCoordinator,
         IStakeRegistry __stakeRegistry
     )
-        BLSSignatureChecker(__registryCoordinator)
-        ServiceManagerBase(__avsDirectory, __rewardsCoordinator, __registryCoordinator, __stakeRegistry)
+    BLSSignatureChecker(__registryCoordinator)
+    ServiceManagerBase(__avsDirectory, __rewardsCoordinator, __registryCoordinator, __stakeRegistry)
     {
         _disableInitializers();
     }
@@ -51,8 +51,8 @@ contract EigenDAServiceManager is EigenDAServiceManagerStorage, ServiceManagerBa
         address[] memory _batchConfirmers,
         address _rewardsInitiator
     )
-        public
-        initializer
+    public
+    initializer
     {
         _initializePauser(_pauserRegistry, _initialPausedStatus);
         _transferOwnership(_initialOwner);
@@ -68,60 +68,70 @@ contract EigenDAServiceManager is EigenDAServiceManagerStorage, ServiceManagerBa
      * - check that the aggregate signature is valid,
      * - and check whether quorum has been achieved or not.
      */
+    /**
+     * @notice 此函数用于
+     * - 提交数据可用性证书，
+     * - 检查聚合签名是否有效，
+     * - 检查是否已达到法定人数。
+     */
     function confirmBatch(
         BatchHeader calldata batchHeader,
         NonSignerStakesAndSignature memory nonSignerStakesAndSignature
     ) external onlyWhenNotPaused(PAUSED_CONFIRM_BATCH) onlyBatchConfirmer() {
+        // 确保调用者直接与合约交互，而不是通过另一个合约
         // make sure the information needed to derive the non-signers and batch is in calldata to avoid emitting events
         require(tx.origin == msg.sender, "EigenDAServiceManager.confirmBatch: header and nonsigner data must be in calldata");
         // make sure the stakes against which the Batch is being confirmed are not stale
+        // 验证引用区块号是否有效（不是未来区块且不太旧）
         require(
             batchHeader.referenceBlockNumber < block.number, "EigenDAServiceManager.confirmBatch: specified referenceBlockNumber is in future"
         );
-
         require(
-            (batchHeader.referenceBlockNumber + BLOCK_STALE_MEASURE) >= uint32(block.number),
+        (batchHeader.referenceBlockNumber + BLOCK_STALE_MEASURE) >= uint32(block.number),
             "EigenDAServiceManager.confirmBatch: specified referenceBlockNumber is too far in past"
         );
 
+        // 确保quorum数量和签名stake数量匹配
         //make sure that the quorumNumbers and signedStakeForQuorums are of the same length
         require(
             batchHeader.quorumNumbers.length == batchHeader.signedStakeForQuorums.length,
             "EigenDAServiceManager.confirmBatch: quorumNumbers and signedStakeForQuorums must be of the same length"
         );
-
+        // 计算节点签名的减少批次头部哈希
         // calculate reducedBatchHeaderHash which nodes signed
         bytes32 reducedBatchHeaderHash = batchHeader.hashBatchHeaderToReducedBatchHeader();
 
         // check the signature
+        // 检查签名并获取quorum stake总量和签名者记录哈希
         (
             QuorumStakeTotals memory quorumStakeTotals,
             bytes32 signatoryRecordHash
         ) = checkSignatures(
-            reducedBatchHeaderHash, 
+            reducedBatchHeaderHash,
             batchHeader.quorumNumbers, // use list of uint8s instead of uint256 bitmap to not iterate 256 times
-            batchHeader.referenceBlockNumber, 
+            batchHeader.referenceBlockNumber,
             nonSignerStakesAndSignature
         );
 
+        // 验证每个quorum的签名者是否拥有足够的stake比例
         // check that signatories own at least a threshold percentage of each quourm
         for (uint i = 0; i < batchHeader.signedStakeForQuorums.length; i++) {
             // we don't check that the signedStakeForQuorums are not >100 because a greater value would trivially fail the check, implying 
             // signed stake > total stake
             require(
-                quorumStakeTotals.signedStakeForQuorum[i] * THRESHOLD_DENOMINATOR >= 
-                    quorumStakeTotals.totalStakeForQuorum[i] * uint8(batchHeader.signedStakeForQuorums[i]),
+                quorumStakeTotals.signedStakeForQuorum[i] * THRESHOLD_DENOMINATOR >=
+                quorumStakeTotals.totalStakeForQuorum[i] * uint8(batchHeader.signedStakeForQuorums[i]),
                 "EigenDAServiceManager.confirmBatch: signatories do not own at least threshold percentage of a quorum"
             );
         }
-
+        // 存储批次元数据哈希
         // store the metadata hash
         uint32 batchIdMemory = batchId;
         bytes32 batchHeaderHash = batchHeader.hashBatchHeader();
         batchIdToBatchMetadataHash[batchIdMemory] = EigenDAHasher.hashBatchHashedMetadata(batchHeaderHash, signatoryRecordHash, uint32(block.number));
-
+        // 发出批次确认事件
         emit BatchConfirmed(reducedBatchHeaderHash, batchIdMemory);
-
+        // 增加批次ID
         // increment the batchId
         batchId = batchIdMemory + 1;
     }

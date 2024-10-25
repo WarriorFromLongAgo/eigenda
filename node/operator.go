@@ -49,10 +49,12 @@ func RegisterOperator(ctx context.Context, operator *Operator, transactor core.T
 	logger.Info("Quorums to register for", "quorums", fmt.Sprint(quorumsToRegister))
 
 	// register for quorums
+	// 检查是否需要调用churner
 	shouldCallChurner := false
 	// check if one of the quorums to register for is full
 	for _, quorumID := range quorumsToRegister {
 		// 遍历每个要注册的quorum，检查是否已满。
+		// 检查每个quorum是否已满
 		operatorSetParams, err := transactor.GetOperatorSetParams(ctx, quorumID)
 		if err != nil {
 			return err
@@ -73,7 +75,7 @@ func RegisterOperator(ctx context.Context, operator *Operator, transactor core.T
 	logger.Info("Should call churner", "shouldCallChurner", shouldCallChurner)
 
 	// Generate salt and expiry
-
+	// 生成注册所需的salt和过期时间
 	privateKeyBytes := []byte(operator.KeyPair.PrivKey.String())
 	salt := [32]byte{}
 	copy(salt[:], crypto.Keccak256([]byte("churn"), []byte(time.Now().String()), quorumsToRegister, privateKeyBytes))

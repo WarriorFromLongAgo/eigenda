@@ -137,6 +137,7 @@ func (s *Server) validateStoreChunkRequest(in *pb.StoreChunksRequest) error {
 }
 
 // StoreChunks is called by dispersers to store data.
+// StoreChunks 更适合处理整批数据，而 StoreBlobs 更适合处理单个或多个独立的blob
 func (s *Server) StoreChunks(ctx context.Context, in *pb.StoreChunksRequest) (*pb.StoreChunksReply, error) {
 	start := time.Now()
 
@@ -206,6 +207,8 @@ func (s *Server) validateStoreBlobsRequest(in *pb.StoreBlobsRequest) error {
 	return nil
 }
 
+// StoreBlobs
+// StoreChunks 更适合处理整批数据，而 StoreBlobs 更适合处理单个或多个独立的blob
 func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.StoreBlobsReply, error) {
 	start := time.Now()
 	// 调用validateStoreBlobsRequest方法验证输入请求的有效性。
@@ -252,6 +255,7 @@ func (s *Server) StoreBlobs(ctx context.Context, in *pb.StoreBlobsRequest) (*pb.
 	return &pb.StoreBlobsReply{Signatures: signaturesBytes}, nil
 }
 
+// AttestBatch 方法在这个系统中扮演着重要的角色，主要用于验证和证明一个批次（batch）的完整性。
 func (s *Server) AttestBatch(ctx context.Context, in *pb.AttestBatchRequest) (*pb.AttestBatchReply, error) {
 	start := time.Now()
 

@@ -242,15 +242,15 @@ func (t *Transactor) RegisterOperatorWithChurn(
 	operatorToAvsRegistrationSigExpiry *big.Int,
 	churnReply *churner.ChurnReply,
 ) error {
-
+	// 获取注册所需的参数和操作员签名
 	params, operatorSignature, err := t.getRegistrationParams(ctx, keypair, operatorEcdsaPrivateKey, operatorToAvsRegistrationSigSalt, operatorToAvsRegistrationSigExpiry)
 	if err != nil {
 		t.Logger.Error("Failed to get registration params", "err", err)
 		return err
 	}
-
+	// 将 quorum IDs 转换为 quorum numbers
 	quorumNumbers := quorumIDsToQuorumNumbers(quorumIds)
-
+	// 处理来自 churner 的回复，准备需要轮换的操作员信息
 	operatorsToChurn := make([]regcoordinator.IRegistryCoordinatorOperatorKickParam, len(churnReply.OperatorsToChurn))
 	for i := range churnReply.OperatorsToChurn {
 		if churnReply.OperatorsToChurn[i].QuorumId >= core.MaxQuorumID {
@@ -262,7 +262,7 @@ func (t *Transactor) RegisterOperatorWithChurn(
 			Operator:     gethcommon.BytesToAddress(churnReply.OperatorsToChurn[i].Operator),
 		}
 	}
-
+	// 准备 churn 审批者的签名
 	var salt [32]byte
 	copy(salt[:], churnReply.SignatureWithSaltAndExpiry.Salt[:])
 	churnApproverSignature := regcoordinator.ISignatureUtilsSignatureWithSaltAndExpiry{
@@ -270,13 +270,13 @@ func (t *Transactor) RegisterOperatorWithChurn(
 		Salt:      salt,
 		Expiry:    new(big.Int).SetInt64(churnReply.SignatureWithSaltAndExpiry.Expiry),
 	}
-
+	// 获取交易选项
 	opts, err := t.EthClient.GetNoSendTransactOpts()
 	if err != nil {
 		t.Logger.Error("Failed to generate transact opts", "err", err)
 		return err
 	}
-
+	// 调用智能合约的 RegisterOperatorWithChurn 函数
 	tx, err := t.Bindings.RegistryCoordinator.RegisterOperatorWithChurn(
 		opts,
 		quorumNumbers,
@@ -291,7 +291,7 @@ func (t *Transactor) RegisterOperatorWithChurn(
 		t.Logger.Error("Failed to register operator with churn", "err", err)
 		return err
 	}
-
+	// 估算 gas 价格和限制，并发送交易
 	_, err = t.EthClient.EstimateGasPriceAndLimitAndSendTx(context.Background(), tx, "RegisterOperatorWithCoordinatorWithChurn", nil)
 	if err != nil {
 		t.Logger.Error("Failed to estimate gas price and limit", "err", err)
@@ -521,10 +521,22 @@ func (t *Transactor) BuildConfirmBatchTxn(ctx context.Context, batchHeader *core
 	// 准备批次头信息：
 	signedStakeForQuorums := serializeSignedStakeForQuorums(quorums)
 	batchH := eigendasrvmg.IEigenDAServiceManagerBatchHeader{
-		BlobHeadersRoot:       batchHeader.BatchRoot,
-		QuorumNumbers:         quorumNumbers,
+		//BlobHeadersRoot:
+		//这是一个Merkle树根哈希，代表了批次中所有Blob（二进制大对象）头部的摘要。
+		//它允许高效地验证批次中包含的所有Blob，而无需传输完整的Blob数据。
+		//通过这个根哈希，可以验证任何单个Blob是否属于这个批次，而不需要访问其他Blob。
+		BlobHeadersRoot: batchHeader.BatchRoot,
+		// 这是一个数组，包含了参与此批次验证的所有法定人数（quorum）的标识符。
+		// 每个quorum代表了一组验证者，他们共同负责验证和确认数据。
+		// 使用多个quorum可以增加系统的安全性和可靠性，因为它要求不同组的验证者达成共识。
+		QuorumNumbers: quorumNumbers,
+		// 这个数组与QuorumNumbers一一对应，表示每个quorum中签名的stake比例。
+		// Stake通常表示验证者在系统中质押的资产或权重。
+		// 这个字段用于确保每个quorum中有足够多的stake（通常是总stake的某个百分比）支持了这个批次。
 		SignedStakeForQuorums: signedStakeForQuorums,
-		ReferenceBlockNumber:  uint32(batchHeader.ReferenceBlockNumber),
+		// 这是一个区块号，用作计算验证者stake和权重的参考点。
+		// 使用特定的区块号作为参考点很重要，因为验证者的stake可能随时间变化。
+		ReferenceBlockNumber: uint32(batchHeader.ReferenceBlockNumber),
 	}
 	t.Logger.Debug("batch header", "batchHeaderReferenceBlock", batchH.ReferenceBlockNumber, "batchHeaderRoot", gethcommon.Bytes2Hex(batchH.BlobHeadersRoot[:]), "quorumNumbers", gethcommon.Bytes2Hex(batchH.QuorumNumbers), "quorumThresholdPercentages", gethcommon.Bytes2Hex(batchH.SignedStakeForQuorums))
 	// 转换聚合签名和公钥为合约所需的格式：
@@ -808,13 +820,17 @@ func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigen
 		t.Logger.Error("Failed to fetch IEigenDAServiceManager contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/interfaces/IBLSSignatureChecker.sol
+	// 获取 IDelegationManager 合约的地址，这个合约在eigenlayer中
 	delegationManagerAddr, err := contractEigenDAServiceManager.Delegation(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch DelegationManager address", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/ServiceManagerBase.sol:147
+	// 获取 IAVSDirectory 合约的地址，这个合约在eigenlayer中
 	avsDirectoryAddr, err := contractEigenDAServiceManager.AvsDirectory(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch AVSDirectory address", "err", err)
@@ -832,7 +848,9 @@ func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigen
 		t.Logger.Error("Failed to fetch DelegationManager contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/interfaces/IBLSSignatureChecker.sol:49
+	// 获取 IRegistryCoordinator 合约的地址，这个合约在 middleware 中
 	registryCoordinatorAddr, err := contractEigenDAServiceManager.RegistryCoordinator(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch RegistryCoordinator address", "err", err)
@@ -844,7 +862,9 @@ func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigen
 		t.Logger.Error("Failed to fetch IBLSRegistryCoordinatorWithIndices contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/RegistryCoordinatorStorage.sol:65
+	// 获取 ejector 合约的地址，这个合约在 middleware 中
 	contractEjectionManagerAddr, err := contractIRegistryCoordinator.Ejector(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch EjectionManager address", "err", err)
@@ -855,13 +875,16 @@ func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigen
 		t.Logger.Error("Failed to fetch EjectionManager contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/OperatorStateRetriever.sol:16
+	// OperatorStateRetriever，
 	contractBLSOpStateRetr, err := opstateretriever.NewContractOperatorStateRetriever(blsOperatorStateRetrieverAddr, t.EthClient)
 	if err != nil {
 		t.Logger.Error("Failed to fetch BLSOperatorStateRetriever contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/interfaces/IBLSApkRegistry.sol
 	blsPubkeyRegistryAddr, err := contractIRegistryCoordinator.BlsApkRegistry(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch BlsPubkeyRegistry address", "err", err)
@@ -875,19 +898,20 @@ func (t *Transactor) updateContractBindings(blsOperatorStateRetrieverAddr, eigen
 		t.Logger.Error("Failed to fetch IBLSApkRegistry contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/interfaces/IIndexRegistry.sol:10
 	indexRegistryAddr, err := contractIRegistryCoordinator.IndexRegistry(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch IndexRegistry address", "err", err)
 		return err
 	}
-
 	contractIIndexReg, err := indexreg.NewContractIIndexRegistry(indexRegistryAddr, t.EthClient)
 	if err != nil {
 		t.Logger.Error("Failed to fetch IIndexRegistry contract", "err", err)
 		return err
 	}
-
+	// eigenlayer-middleware
+	// src/interfaces/IStakeRegistry.sol:13
 	stakeRegistryAddr, err := contractIRegistryCoordinator.StakeRegistry(&bind.CallOpts{})
 	if err != nil {
 		t.Logger.Error("Failed to fetch StakeRegistry address", "err", err)

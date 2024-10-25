@@ -259,7 +259,12 @@ func (n *Node) Start(ctx context.Context) error {
 	// Start the Node IP updater only if the PUBLIC_IP_PROVIDER is greater than 0.
 	// 如果配置了公共IP检查间隔，启动IP更新任务
 	if n.Config.PubIPCheckInterval > 0 {
+		// 监听区块链上注册的操作员套接字（socket）变化。
+		// 如果检测到链上注册的套接字与节点当前保存的套接字不同，就更新节点的套接字信息。
+		// 确保节点始终知道其在区块链上最新注册的套接字地址。
 		go n.checkRegisteredNodeIpOnChain(ctx)
+		// 定期检查节点的当前公网 IP 地址。
+		// 如果发现 IP 地址发生变化，就更新节点的套接字信息，并将新的套接字地址注册到区块链上。
 		go n.checkCurrentNodeIp(ctx)
 	}
 

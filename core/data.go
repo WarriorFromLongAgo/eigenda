@@ -39,6 +39,9 @@ const (
 	// We use uint8 to count the number of quorums, so we can have at most 255 quorums,
 	// which means the max ID can not be larger than 254 (from 0 to 254, there are 255
 	// different IDs).
+	// 我们使用 uint8 来计算法定人数，因此最多可以有 255 个法定人数，
+	// 这意味着最大 ID 不能大于 254（从 0 到 254，共有 255 个
+	// 不同的 ID）。
 	MaxQuorumID = 254
 
 	// How many bits for the bundle's header.
